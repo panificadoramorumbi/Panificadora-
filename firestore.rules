@@ -1,0 +1,125 @@
+rules_version = '2';
+
+service cloud.firestore {
+  match /databases/{database}/documents {
+
+    // Default deny catch-all
+    match /{document=**} {
+      allow read, write: if false;
+    }
+
+    // Helper functions
+    function isSignedIn() {
+      return request.auth != null;
+    }
+
+    function isAdmin() {
+      return isSignedIn() && (
+        exists(/databases/$(database)/documents/admins/$(request.auth.uid)) ||
+        request.auth.token.email == 'wiliamedfprofessor@gmail.com'
+      );
+    }
+
+    function isOwner(userId) {
+      return isSignedIn() && request.auth.uid == userId;
+    }
+
+    // Connection testing
+    match /test/{docId} {
+      allow read: if isSignedIn();
+      allow write: if isSignedIn();
+    }
+
+    // User Profiles
+    match /users/{userId} {
+      allow get: if isOwner(userId) || isAdmin();
+      allow list: if isAdmin();
+      allow create: if isAdmin() || (isOwner(userId) && request.resource.data.role == 'revendedor');
+      allow update: if isAdmin() || (
+        isOwner(userId) &&
+        !request.resource.data.diff(resource.data).affectedKeys().hasAny(['role', 'uid', 'email'])
+      );
+      allow delete: if isAdmin();
+    }
+
+    // Admin role mapping
+    match /admins/{adminId} {
+      allow read: if isSignedIn();
+      allow write: if isAdmin();
+    }
+
+    // Orders collection
+    match /orders/{orderId} {
+      allow get: if isAdmin() || (isSignedIn() && resource.data.resellerId == request.auth.uid);
+      allow list: if isAdmin() || (isSignedIn() && resource.data.resellerId == request.auth.uid);
+      
+      allow create: if isAdmin() || (
+        isSignedIn() &&
+        request.resource.data.resellerId == request.auth.uid &&
+        request.resource.data.qtySaltyPickup >= 0 &&
+        request.resource.data.qtySweetPickup >= 0
+      ) || (
+        request.resource.data.orderType == 'varejo' &&
+        request.resource.data.qtySaltyPickup >= 0 &&
+        request.resource.data.qtySweetPickup >= 0 &&
+        request.resource.data.resellerName is string &&
+        request.resource.data.customerPhone is string
+      );
+
+      // Resellers can only record leftovers; Admins can perform full audits and quantity updates
+      allow update: if isAdmin() || (
+        isSignedIn() &&
+        resource.data.resellerId == request.auth.uid &&
+        request.resource.data.diff(resource.data).affectedKeys().hasOnly([
+          'qtySaltyLeftover',
+          'qtySweetLeftover',
+          'qtySaltySold',
+          'qtySweetSold',
+          'leftoversRecorded',
+          'leftoversRecordedAt',
+          'leftoversRecordedBy',
+          'finalTotal',
+          'balanceDue',
+          'status',
+          'paymentStatus',
+          'updatedAt'
+        ]) &&
+        request.resource.data.qtySaltyLeftover >= 0 &&
+        request.resource.data.qtySweetLeftover >= 0 &&
+        request.resource.data.qtySaltyLeftover <= resource.data.qtySaltyPickup &&
+        request.resource.data.qtySweetLeftover <= resource.data.qtySweetPickup
+      );
+
+      allow delete: if isAdmin();
+    }
+
+    // Payments collection
+    match /payments/{paymentId} {
+      allow get: if isAdmin() || (isSignedIn() && resource.data.resellerId == request.auth.uid);
+      allow list: if isAdmin() || (isSignedIn() && resource.data.resellerId == request.auth.uid);
+      allow create, update, delete: if isAdmin();
+    }
+
+    // Audit logs collection (immutable records)
+    match /audit_logs/{logId} {
+      allow read: if isAdmin();
+      allow create: if isAdmin();
+      allow update, delete: if false;
+    }
+
+    // Global settings and unit prices (publicly readable so retail customers can view current prices)
+    match /settings/{settingId} {
+      allow read: if true;
+      allow write: if isAdmin();
+    }
+
+    // In-app notifications
+    match /notifications/{notificationId} {
+      allow get: if isSignedIn() && (resource.data.targetUserId == request.auth.uid || resource.data.targetUserId == 'all' || isAdmin());
+      allow list: if isSignedIn() && (resource.data.targetUserId == request.auth.uid || resource.data.targetUserId == 'all' || isAdmin());
+      allow create: if isSignedIn() || request.resource.data.type == 'pedido';
+      allow update: if isSignedIn() && (resource.data.targetUserId == request.auth.uid || isAdmin());
+      allow delete: if isAdmin() || (isSignedIn() && resource.data.targetUserId == request.auth.uid);
+    }
+  }
+}

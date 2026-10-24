@@ -1,0 +1,6 @@
+{
+  "name": "Panificadora Morumbi — Sistema de Revenda de Pães",
+  "description": "Sistema completo de revenda de pães, gestão de pedidos, registro de sobras e acertos financeiros para a Panificadora Morumbi.",
+  "requestFramePermissions": [],
+  "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
+}

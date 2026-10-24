@@ -1,0 +1,170 @@
+{
+  "entities": {
+    "UserProfile": {
+      "title": "UserProfile",
+      "description": "User profile identifying administrators and resellers.",
+      "type": "object",
+      "properties": {
+        "uid": { "type": "string", "maxLength": 128 },
+        "email": { "type": "string", "maxLength": 256 },
+        "displayName": { "type": "string", "maxLength": 150 },
+        "phone": { "type": "string", "maxLength": 30 },
+        "role": { "type": "string", "enum": ["admin", "revendedor"] },
+        "active": { "type": "boolean" },
+        "createdAt": { "type": "string", "maxLength": 50 },
+        "updatedAt": { "type": "string", "maxLength": 50 }
+      },
+      "required": ["uid", "email", "displayName", "role", "active"]
+    },
+    "AdminRole": {
+      "title": "AdminRole",
+      "description": "Document granting administrative privileges.",
+      "type": "object",
+      "properties": {
+        "email": { "type": "string", "maxLength": 256 },
+        "createdAt": { "type": "string", "maxLength": 50 }
+      },
+      "required": ["email"]
+    },
+    "Order": {
+      "title": "Order",
+      "description": "Bakery bread order record with pickup quantities, leftovers, pricing snapshots and settlement status.",
+      "type": "object",
+      "properties": {
+        "orderId": { "type": "string", "maxLength": 128 },
+        "orderNumber": { "type": "string", "maxLength": 32 },
+        "resellerId": { "type": "string", "maxLength": 128 },
+        "resellerName": { "type": "string", "maxLength": 150 },
+        "orderDate": { "type": "string", "maxLength": 30 },
+        "deliveryDate": { "type": "string", "maxLength": 30 },
+        "qtySaltyPickup": { "type": "number" },
+        "qtySweetPickup": { "type": "number" },
+        "qtySaltyLeftover": { "type": "number" },
+        "qtySweetLeftover": { "type": "number" },
+        "qtySaltySold": { "type": "number" },
+        "qtySweetSold": { "type": "number" },
+        "unitPriceSalty": { "type": "number" },
+        "unitPriceSweet": { "type": "number" },
+        "expectedTotal": { "type": "number" },
+        "finalTotal": { "type": "number" },
+        "status": { "type": "string", "enum": ["pendente", "aguardando_sobras", "concluido", "cancelado"] },
+        "paymentStatus": { "type": "string", "enum": ["pendente", "parcial", "pago"] },
+        "amountPaid": { "type": "number" },
+        "balanceDue": { "type": "number" },
+        "notes": { "type": "string", "maxLength": 500 },
+        "createdAt": { "type": "string", "maxLength": 50 },
+        "updatedAt": { "type": "string", "maxLength": 50 },
+        "leftoversRecordedAt": { "type": "string", "maxLength": 50 },
+        "leftoversRecordedBy": { "type": "string", "maxLength": 128 },
+        "lastModifiedBy": { "type": "string", "maxLength": 128 },
+        "lastModifiedReason": { "type": "string", "maxLength": 500 }
+      },
+      "required": [
+        "orderId",
+        "resellerId",
+        "orderDate",
+        "deliveryDate",
+        "qtySaltyPickup",
+        "qtySweetPickup",
+        "unitPriceSalty",
+        "unitPriceSweet",
+        "expectedTotal",
+        "status",
+        "paymentStatus"
+      ]
+    },
+    "Payment": {
+      "title": "Payment",
+      "description": "Financial payment settlement record for orders.",
+      "type": "object",
+      "properties": {
+        "paymentId": { "type": "string", "maxLength": 128 },
+        "resellerId": { "type": "string", "maxLength": 128 },
+        "resellerName": { "type": "string", "maxLength": 150 },
+        "orderIds": { "type": "array" },
+        "amount": { "type": "number" },
+        "paymentMethod": { "type": "string", "maxLength": 50 },
+        "paymentDate": { "type": "string", "maxLength": 50 },
+        "notes": { "type": "string", "maxLength": 500 },
+        "registeredBy": { "type": "string", "maxLength": 128 },
+        "createdAt": { "type": "string", "maxLength": 50 }
+      },
+      "required": ["paymentId", "resellerId", "amount", "paymentMethod", "paymentDate"]
+    },
+    "AuditLog": {
+      "title": "AuditLog",
+      "description": "Audit record for exceptional quantity adjustments made by administrators.",
+      "type": "object",
+      "properties": {
+        "logId": { "type": "string", "maxLength": 128 },
+        "orderId": { "type": "string", "maxLength": 128 },
+        "adminId": { "type": "string", "maxLength": 128 },
+        "adminEmail": { "type": "string", "maxLength": 256 },
+        "actionType": { "type": "string", "maxLength": 50 },
+        "previousData": { "type": "object" },
+        "newData": { "type": "object" },
+        "reason": { "type": "string", "maxLength": 500 },
+        "timestamp": { "type": "string", "maxLength": 50 }
+      },
+      "required": ["logId", "orderId", "adminId", "actionType", "reason", "timestamp"]
+    },
+    "Setting": {
+      "title": "Setting",
+      "description": "Bakery configuration parameters including unit prices.",
+      "type": "object",
+      "properties": {
+        "priceSalty": { "type": "number" },
+        "priceSweet": { "type": "number" },
+        "updatedAt": { "type": "string", "maxLength": 50 },
+        "updatedBy": { "type": "string", "maxLength": 128 }
+      },
+      "required": ["priceSalty", "priceSweet"]
+    },
+    "Notification": {
+      "title": "Notification",
+      "description": "In-app notifications for order updates and leftovers alerts.",
+      "type": "object",
+      "properties": {
+        "notificationId": { "type": "string", "maxLength": 128 },
+        "targetUserId": { "type": "string", "maxLength": 128 },
+        "title": { "type": "string", "maxLength": 150 },
+        "message": { "type": "string", "maxLength": 500 },
+        "type": { "type": "string", "maxLength": 50 },
+        "read": { "type": "boolean" },
+        "link": { "type": "string", "maxLength": 256 },
+        "createdAt": { "type": "string", "maxLength": 50 }
+      },
+      "required": ["notificationId", "targetUserId", "title", "message", "read"]
+    }
+  },
+  "firestore": {
+    "/users/{userId}": {
+      "schema": { "$ref": "#/entities/UserProfile" },
+      "description": "User profiles for admins and resellers."
+    },
+    "/admins/{adminId}": {
+      "schema": { "$ref": "#/entities/AdminRole" },
+      "description": "Lookup document granting admin access by UID."
+    },
+    "/orders/{orderId}": {
+      "schema": { "$ref": "#/entities/Order" },
+      "description": "Bread orders with pickups, leftovers, and financial status."
+    },
+    "/payments/{paymentId}": {
+      "schema": { "$ref": "#/entities/Payment" },
+      "description": "Settlement payment records."
+    },
+    "/audit_logs/{logId}": {
+      "schema": { "$ref": "#/entities/AuditLog" },
+      "description": "Audit trail for admin quantity corrections and adjustments."
+    },
+    "/settings/{settingId}": {
+      "schema": { "$ref": "#/entities/Setting" },
+      "description": "Global store settings and unit prices."
+    },
+    "/notifications/{notificationId}": {
+      "schema": { "$ref": "#/entities/Notification" },
+      "description": "User in-app notifications."
+    }
+  }
+}
