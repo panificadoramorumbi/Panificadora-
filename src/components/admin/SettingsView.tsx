@@ -1,4 +1,4 @@
-import React, { useState } from 'react';
+import React, { useState, useEffect } from 'react';
 import {
   Settings,
   DollarSign,
@@ -38,6 +38,13 @@ export const SettingsView: React.FC<SettingsViewProps> = ({ currentPrices }) => 
   const [savingPrices, setSavingPrices] = useState(false);
   const [priceSuccess, setPriceSuccess] = useState<string | null>(null);
   const [priceError, setPriceError] = useState<string | null>(null);
+
+  useEffect(() => {
+    setPriceSalty(currentPrices.priceSalty);
+    setPriceSweet(currentPrices.priceSweet);
+    setRetailPriceSalty(currentPrices.retailPriceSalty || 1.0);
+    setRetailPriceSweet(currentPrices.retailPriceSweet || 1.5);
+  }, [currentPrices]);
 
   // Diagnostic state
   const [testingDb, setTestingDb] = useState(false);

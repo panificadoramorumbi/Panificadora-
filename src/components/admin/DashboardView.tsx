@@ -143,48 +143,58 @@ Abra pelo navegador do celular e clique em "Instalar Aplicativo" para salvar na 
           </p>
         </div>
 
-        {/* Period Selector Tabs */}
-        <div className="inline-flex p-1 bg-stone-100 rounded-2xl border border-stone-200 self-start md:self-auto">
+        {/* Controls: Period Selector & Quick Price Edit */}
+        <div className="flex flex-wrap items-center gap-2 self-start md:self-auto">
           <button
-            onClick={() => setPeriod('today')}
-            className={`px-3 py-1.5 rounded-xl text-xs font-bold transition ${
-              period === 'today'
-                ? 'bg-red-800 text-white shadow-sm'
-                : 'text-stone-600 hover:text-stone-900'
-            }`}
+            onClick={() => onNavigate('settings')}
+            className="px-3.5 py-2 rounded-xl bg-amber-400 hover:bg-amber-300 active:scale-95 text-stone-950 font-black text-xs uppercase flex items-center gap-1.5 shadow-sm transition cursor-pointer"
           >
-            Hoje
+            <DollarSign className="w-4 h-4 text-stone-950" />
+            <span>Mudar Preço dos Pães</span>
           </button>
-          <button
-            onClick={() => setPeriod('7days')}
-            className={`px-3 py-1.5 rounded-xl text-xs font-bold transition ${
-              period === '7days'
-                ? 'bg-red-800 text-white shadow-sm'
-                : 'text-stone-600 hover:text-stone-900'
-            }`}
-          >
-            7 Dias
-          </button>
-          <button
-            onClick={() => setPeriod('month')}
-            className={`px-3 py-1.5 rounded-xl text-xs font-bold transition ${
-              period === 'month'
-                ? 'bg-red-800 text-white shadow-sm'
-                : 'text-stone-600 hover:text-stone-900'
-            }`}
-          >
-            Este Mês
-          </button>
-          <button
-            onClick={() => setPeriod('all')}
-            className={`px-3 py-1.5 rounded-xl text-xs font-bold transition ${
-              period === 'all'
-                ? 'bg-red-800 text-white shadow-sm'
-                : 'text-stone-600 hover:text-stone-900'
-            }`}
-          >
-            Todos
-          </button>
+
+          <div className="inline-flex p-1 bg-stone-100 rounded-2xl border border-stone-200">
+            <button
+              onClick={() => setPeriod('today')}
+              className={`px-3 py-1.5 rounded-xl text-xs font-bold transition ${
+                period === 'today'
+                  ? 'bg-red-800 text-white shadow-sm'
+                  : 'text-stone-600 hover:text-stone-900'
+              }`}
+            >
+              Hoje
+            </button>
+            <button
+              onClick={() => setPeriod('7days')}
+              className={`px-3 py-1.5 rounded-xl text-xs font-bold transition ${
+                period === '7days'
+                  ? 'bg-red-800 text-white shadow-sm'
+                  : 'text-stone-600 hover:text-stone-900'
+              }`}
+            >
+              7 Dias
+            </button>
+            <button
+              onClick={() => setPeriod('month')}
+              className={`px-3 py-1.5 rounded-xl text-xs font-bold transition ${
+                period === 'month'
+                  ? 'bg-red-800 text-white shadow-sm'
+                  : 'text-stone-600 hover:text-stone-900'
+              }`}
+            >
+              Este Mês
+            </button>
+            <button
+              onClick={() => setPeriod('all')}
+              className={`px-3 py-1.5 rounded-xl text-xs font-bold transition ${
+                period === 'all'
+                  ? 'bg-red-800 text-white shadow-sm'
+                  : 'text-stone-600 hover:text-stone-900'
+              }`}
+            >
+              Todos
+            </button>
+          </div>
         </div>
       </div>
 

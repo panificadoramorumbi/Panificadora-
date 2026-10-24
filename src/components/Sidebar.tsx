@@ -17,6 +17,7 @@ import {
   ClipboardList,
   Sparkles,
   Tag,
+  DollarSign,
 } from 'lucide-react';
 import { useAuth } from '../context/AuthContext';
 import { UserProfile } from '../types';
@@ -284,17 +285,22 @@ export const Sidebar: React.FC<SidebarProps> = ({
                 <span>6. Notificações</span>
               </button>
 
-              {/* 7. Configurações */}
+              {/* 7. Mudar Preço dos Pães */}
               <button
                 onClick={() => handleNavClick('settings')}
-                className={`w-full flex items-center gap-3 px-3 py-3 rounded-xl font-bold transition text-left ${
+                className={`w-full flex items-center justify-between px-3 py-3 rounded-xl font-bold transition text-left ${
                   activeView === 'settings'
                     ? 'bg-amber-500 text-stone-950 shadow-md'
                     : 'text-stone-200 hover:bg-red-900 hover:text-white'
                 }`}
               >
-                <Settings className="w-5 h-5 shrink-0" />
-                <span>7. Configurações</span>
+                <div className="flex items-center gap-3">
+                  <DollarSign className="w-5 h-5 shrink-0 text-amber-400" />
+                  <span>7. Mudar Preço dos Pães</span>
+                </div>
+                <span className="text-[10px] font-black uppercase px-2 py-0.5 rounded-full bg-amber-400 text-stone-950">
+                  R$
+                </span>
               </button>
             </>
           ) : (
