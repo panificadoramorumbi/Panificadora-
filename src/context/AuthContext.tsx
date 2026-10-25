@@ -48,9 +48,21 @@ interface AuthContextType {
 
 const AuthContext = createContext<AuthContextType | undefined>(undefined);
 
+const LOCAL_STORAGE_PROFILE_KEY = 'morumbi_user_profile';
+
 export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children }) => {
   const [currentUser, setCurrentUser] = useState<User | null>(null);
-  const [userProfile, setUserProfile] = useState<UserProfile | null>(null);
+  const [userProfile, setUserProfile] = useState<UserProfile | null>(() => {
+    try {
+      if (typeof window !== 'undefined') {
+        const cached = localStorage.getItem(LOCAL_STORAGE_PROFILE_KEY);
+        return cached ? JSON.parse(cached) : null;
+      }
+    } catch {
+      // ignore
+    }
+    return null;
+  });
   const [isLoading, setIsLoading] = useState(true);
 
   // Sync profile & role
@@ -134,12 +146,15 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
       }
 
       setUserProfile(profileData);
+      try {
+        localStorage.setItem(LOCAL_STORAGE_PROFILE_KEY, JSON.stringify(profileData));
+      } catch {}
     } catch (error) {
       console.error('Erro ao sincronizar perfil:', error);
       // Fallback local profile if offline or rules block
       const isConfiguredAdmin =
         user.email?.toLowerCase().trim() === FIREBASE_INFO.adminEmail.toLowerCase().trim();
-      setUserProfile({
+      const fallback: UserProfile = {
         uid: user.uid,
         email: user.email || '',
         displayName: user.displayName || (isConfiguredAdmin ? 'Administrador' : 'Revendedor'),
@@ -147,7 +162,11 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
         role: isConfiguredAdmin ? 'admin' : 'revendedor',
         active: true,
         createdAt: new Date().toISOString(),
-      });
+      };
+      setUserProfile(fallback);
+      try {
+        localStorage.setItem(LOCAL_STORAGE_PROFILE_KEY, JSON.stringify(fallback));
+      } catch {}
     }
   };
 
@@ -167,6 +186,9 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
         await syncUserProfile(user);
       } else {
         setUserProfile(null);
+        try {
+          localStorage.removeItem(LOCAL_STORAGE_PROFILE_KEY);
+        } catch {}
       }
       setIsLoading(false);
     });
@@ -310,10 +332,16 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
 
     await setDoc(doc(db, 'users', newUid), newProfile);
     setUserProfile(newProfile);
+    try {
+      localStorage.setItem(LOCAL_STORAGE_PROFILE_KEY, JSON.stringify(newProfile));
+    } catch {}
     setCurrentUser(userCred.user);
   };
 
   const logout = async () => {
+    try {
+      localStorage.removeItem(LOCAL_STORAGE_PROFILE_KEY);
+    } catch {}
     await signOut(auth);
     setUserProfile(null);
     setCurrentUser(null);

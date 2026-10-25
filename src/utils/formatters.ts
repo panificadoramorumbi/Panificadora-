@@ -66,11 +66,12 @@ export function formatPhone(phone: string | undefined | null): string {
 
 /**
  * Builds official WhatsApp URL with pre-filled message
+ * Uses direct api.whatsapp.com/send to prevent wa.me redirect from corrupting multi-byte UTF-8 emojis into 
  */
 export function buildWhatsAppLink(phone: string, message: string): string {
   const digits = phone.replace(/\D/g, '');
   const international = digits.startsWith('55') ? digits : `55${digits}`;
-  return `https://wa.me/${international}?text=${encodeURIComponent(message)}`;
+  return `https://api.whatsapp.com/send?phone=${international}&text=${encodeURIComponent(message)}`;
 }
 
 /**

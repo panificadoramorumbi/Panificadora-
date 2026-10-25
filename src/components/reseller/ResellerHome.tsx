@@ -17,10 +17,18 @@ import {
   Receipt,
   Info,
   Phone,
+  Bell,
+  Smartphone,
 } from 'lucide-react';
-import { Order, ProductPrices, PaymentRecord, InAppNotification } from '../../types';
+import { Order, ProductPrices, PaymentRecord, InAppNotification, NotificationPreference } from '../../types';
 import { formatCurrency, formatDate, formatDateTime, calculateOrderMetrics, formatPhone } from '../../utils/formatters';
 import { createOrder, recordLeftovers, updateUserProfile } from '../../services/dataService';
+import {
+  requestNotificationPermission,
+  getNotificationPermission,
+  showSystemNotification,
+  playNotificationTone,
+} from '../../services/notificationService';
 import { useAuth } from '../../context/AuthContext';
 import { PWAInstallButton } from '../PWAInstallButton';
 
@@ -92,6 +100,43 @@ export const ResellerHome: React.FC<ResellerHomeProps> = ({
     } finally {
       setIsSavingPhone(false);
     }
+  };
+
+  // Notification status & preferences state
+  const [notificationPermission, setNotificationPermission] = useState<NotificationPermission | 'unsupported'>(() => {
+    return getNotificationPermission();
+  });
+  const [savingPref, setSavingPref] = useState(false);
+  const [testNotifSent, setTestNotifSent] = useState(false);
+
+  const handleRequestPermission = async () => {
+    const perm = await requestNotificationPermission();
+    setNotificationPermission(perm);
+  };
+
+  const handleUpdateMyPreference = async (pref: NotificationPreference) => {
+    if (!currentUser) return;
+    setSavingPref(true);
+    try {
+      await updateUserProfile(currentUser.uid, {
+        notificationPreference: pref,
+      });
+      await refreshProfile();
+    } catch (err: any) {
+      alert('Erro ao salvar preferência de notificação: ' + (err?.message || err));
+    } finally {
+      setSavingPref(false);
+    }
+  };
+
+  const handleTestNotification = async () => {
+    await showSystemNotification('🥖 Panificadora Morumbi', {
+      body: 'Teste de aviso no celular! Seus pedidos, sobras e acertos aparecerão diretamente na barra de notificações.',
+      tag: 'morumbi-test',
+    });
+    playNotificationTone();
+    setTestNotifSent(true);
+    setTimeout(() => setTestNotifSent(false), 3000);
   };
 
   // Filter only orders for current reseller
@@ -248,6 +293,34 @@ export const ResellerHome: React.FC<ResellerHomeProps> = ({
           <span>Fazer Novo Pedido</span>
         </button>
       </div>
+
+      {/* Notification Bar Permission Banner (if not yet granted) */}
+      {notificationPermission !== 'granted' && notificationPermission !== 'unsupported' && (
+        <div className="bg-gradient-to-r from-red-950 via-stone-900 to-red-950 text-white rounded-3xl p-5 shadow-md border border-amber-500/30 flex flex-col sm:flex-row sm:items-center justify-between gap-4">
+          <div className="flex items-center gap-3.5">
+            <div className="w-11 h-11 rounded-2xl bg-amber-500 text-stone-950 flex items-center justify-center shrink-0 font-black shadow-md">
+              <Bell className="w-6 h-6 animate-bounce" />
+            </div>
+            <div>
+              <p className="text-sm font-black text-amber-300 flex items-center gap-1.5">
+                Ativar Avisos na Barra do Celular
+              </p>
+              <p className="text-xs text-stone-300 mt-0.5">
+                Receba alertas quando a fornada sair quentinha, lembretes de sobras e comprovantes de pagamentos.
+              </p>
+            </div>
+          </div>
+
+          <button
+            type="button"
+            onClick={handleRequestPermission}
+            className="px-5 py-3 bg-amber-500 hover:bg-amber-400 active:scale-95 text-stone-950 text-xs font-black uppercase rounded-2xl transition shadow-md shrink-0 flex items-center justify-center gap-2"
+          >
+            <Smartphone className="w-4 h-4 text-stone-950" />
+            <span>Ativar Avisos no Celular</span>
+          </button>
+        </div>
+      )}
 
       {/* Financial Status Bar */}
       <div className="grid grid-cols-1 sm:grid-cols-3 gap-4">
@@ -582,28 +655,155 @@ export const ResellerHome: React.FC<ResellerHomeProps> = ({
 
       {/* TAB CONTENT 4: NOTIFICATIONS */}
       {activeTab === 'notifications' && (
-        <div className="bg-white rounded-3xl p-6 shadow-sm border border-stone-200">
-          <h3 className="text-base font-black text-stone-900 mb-4">Minhas Notificações</h3>
-          {notifications.length === 0 ? (
-            <div className="text-center py-8 text-stone-400 text-xs italic">
-              Nenhuma notificação recebida até o momento.
-            </div>
-          ) : (
-            <div className="space-y-3">
-              {notifications.map((n) => (
-                <div
-                  key={n.id}
-                  className="p-4 bg-stone-50 rounded-2xl border border-stone-200 text-xs space-y-1"
-                >
-                  <p className="font-bold text-stone-900">{n.title}</p>
-                  <p className="text-stone-600 leading-relaxed">{n.message}</p>
-                  <span className="text-[10px] text-stone-400 block pt-1">
-                    {formatDateTime(n.createdAt)}
-                  </span>
+        <div className="space-y-6">
+          {/* Card 1: System Notification Bar & Status */}
+          <div className="bg-white rounded-3xl p-6 shadow-sm border border-stone-200 space-y-4">
+            <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4 pb-4 border-b border-stone-100">
+              <div className="flex items-center gap-3">
+                <div className="w-11 h-11 rounded-2xl bg-red-800 text-amber-300 flex items-center justify-center shadow-md">
+                  <Smartphone className="w-6 h-6" />
                 </div>
-              ))}
+                <div>
+                  <h3 className="text-base font-black text-stone-900">
+                    Avisos na Barra de Notificação do Celular
+                  </h3>
+                  <p className="text-xs text-stone-500">
+                    Controle como e onde os alertas da Panificadora Morumbi devem aparecer no seu aparelho
+                  </p>
+                </div>
+              </div>
+
+              {/* Status Badge */}
+              <div className="flex items-center gap-2">
+                {notificationPermission === 'granted' ? (
+                  <span className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-xl bg-emerald-100 text-emerald-800 font-bold text-xs border border-emerald-200">
+                    <CheckCircle2 className="w-4 h-4 text-emerald-600" />
+                    Barra do Celular Ativada
+                  </span>
+                ) : notificationPermission === 'denied' ? (
+                  <span className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-xl bg-rose-100 text-rose-800 font-bold text-xs border border-rose-200">
+                    <AlertCircle className="w-4 h-4 text-rose-600" />
+                    Bloqueado no Navegador
+                  </span>
+                ) : (
+                  <button
+                    type="button"
+                    onClick={handleRequestPermission}
+                    className="px-3.5 py-2 bg-amber-500 hover:bg-amber-600 text-stone-950 font-black text-xs uppercase rounded-xl transition shadow-xs flex items-center gap-1.5"
+                  >
+                    <Bell className="w-3.5 h-3.5" />
+                    <span>Permitir Notificações</span>
+                  </button>
+                )}
+
+                {/* Test notification button */}
+                <button
+                  type="button"
+                  onClick={handleTestNotification}
+                  disabled={testNotifSent}
+                  className="px-3 py-2 bg-stone-100 hover:bg-stone-200 text-stone-700 font-bold text-xs rounded-xl transition border border-stone-200 flex items-center gap-1.5"
+                  title="Fazer um teste de envio agora na barra de notificações"
+                >
+                  <Sparkles className="w-3.5 h-3.5 text-amber-500" />
+                  <span>{testNotifSent ? 'Enviado!' : 'Testar no Celular'}</span>
+                </button>
+              </div>
             </div>
-          )}
+
+            {/* Preference Selector */}
+            <div className="space-y-2.5">
+              <span className="text-xs font-bold text-stone-700 uppercase tracking-wide block">
+                Onde você prefere receber avisos da Padaria Morumbi?
+              </span>
+
+              <div className="grid grid-cols-1 sm:grid-cols-4 gap-2.5">
+                {[
+                  {
+                    key: 'both' as NotificationPreference,
+                    label: '⚡ Em Ambos',
+                    desc: 'Barra do Celular + WhatsApp',
+                  },
+                  {
+                    key: 'in_app' as NotificationPreference,
+                    label: '📱 No Aplicativo',
+                    desc: 'Barra de Status do Celular',
+                  },
+                  {
+                    key: 'whatsapp' as NotificationPreference,
+                    label: '💬 No WhatsApp',
+                    desc: 'Mensagens no seu WhatsApp',
+                  },
+                  {
+                    key: 'none' as NotificationPreference,
+                    label: '🔕 Silencioso',
+                    desc: 'Sem notificações sonoras',
+                  },
+                ].map((item) => {
+                  const current = userProfile?.notificationPreference || 'both';
+                  const isSelected = current === item.key;
+
+                  return (
+                    <button
+                      key={item.key}
+                      type="button"
+                      disabled={savingPref}
+                      onClick={() => handleUpdateMyPreference(item.key)}
+                      className={`p-3 rounded-2xl border text-left transition flex flex-col justify-between ${
+                        isSelected
+                          ? 'bg-amber-400/20 border-amber-500 shadow-xs ring-2 ring-amber-500/30'
+                          : 'bg-stone-50 border-stone-200 hover:bg-white hover:border-stone-300'
+                      }`}
+                    >
+                      <div className="flex items-center justify-between mb-1">
+                        <span className="font-black text-xs text-stone-900">{item.label}</span>
+                        {isSelected && (
+                          <span className="w-2 h-2 rounded-full bg-amber-600" />
+                        )}
+                      </div>
+                      <p className="text-[11px] text-stone-500">{item.desc}</p>
+                    </button>
+                  );
+                })}
+              </div>
+              <p className="text-[11px] text-stone-500 italic">
+                Sua preferência fica salva automaticamente e informa a administração da padaria.
+              </p>
+            </div>
+          </div>
+
+          {/* Card 2: Notifications List */}
+          <div className="bg-white rounded-3xl p-6 shadow-sm border border-stone-200">
+            <h3 className="text-base font-black text-stone-900 mb-4 flex items-center gap-2">
+              <Bell className="w-5 h-5 text-red-800" />
+              <span>Histórico de Notificações Recebidas ({notifications.length})</span>
+            </h3>
+
+            {notifications.length === 0 ? (
+              <div className="text-center py-8 text-stone-400 text-xs italic">
+                Nenhuma notificação recebida até o momento.
+              </div>
+            ) : (
+              <div className="space-y-3">
+                {notifications.map((n) => (
+                  <div
+                    key={n.id}
+                    className="p-4 bg-stone-50 hover:bg-amber-50/30 rounded-2xl border border-stone-200 text-xs space-y-1 transition"
+                  >
+                    <div className="flex items-center justify-between">
+                      <p className="font-bold text-stone-900 flex items-center gap-1.5">
+                        <Croissant className="w-3.5 h-3.5 text-amber-500" />
+                        <span>{n.title}</span>
+                      </p>
+                      <span className="text-[10px] text-stone-400">
+                        {formatDateTime(n.createdAt)}
+                      </span>
+                    </div>
+                    <p className="text-stone-600 leading-relaxed pl-5">{n.message}</p>
+                  </div>
+                ))}
+              </div>
+            )}
+          </div>
         </div>
       )}
 

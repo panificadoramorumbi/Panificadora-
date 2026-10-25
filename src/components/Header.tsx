@@ -8,6 +8,7 @@ interface HeaderProps {
   setSidebarOpen: (open: boolean) => void;
   unreadCount?: number;
   onOpenNotifications?: () => void;
+  onGoHome?: () => void;
 }
 
 export const Header: React.FC<HeaderProps> = ({
@@ -15,6 +16,7 @@ export const Header: React.FC<HeaderProps> = ({
   setSidebarOpen,
   unreadCount = 0,
   onOpenNotifications,
+  onGoHome,
 }) => {
   const { userProfile, isAdmin, logout } = useAuth();
 
@@ -32,12 +34,17 @@ export const Header: React.FC<HeaderProps> = ({
               {sidebarOpen ? <X className="w-6 h-6" /> : <Menu className="w-6 h-6" />}
             </button>
 
-            <div className="flex items-center gap-2.5">
-              <div className="w-10 h-10 rounded-xl bg-amber-500/20 border border-amber-400/40 flex items-center justify-center text-amber-400 shadow-inner">
+            <button
+              type="button"
+              onClick={onGoHome}
+              className="flex items-center gap-2.5 text-left rounded-2xl p-1 -m-1 hover:bg-red-950/40 active:scale-98 transition cursor-pointer group focus:outline-hidden"
+              title="Voltar ao início"
+            >
+              <div className="w-10 h-10 rounded-xl bg-amber-500/20 border border-amber-400/40 flex items-center justify-center text-amber-400 shadow-inner group-hover:scale-105 group-hover:bg-amber-500/30 transition">
                 <Croissant className="w-6 h-6" />
               </div>
               <div>
-                <h1 className="text-base sm:text-lg font-black tracking-tight leading-none text-white flex items-center gap-2">
+                <h1 className="text-base sm:text-lg font-black tracking-tight leading-none text-white flex items-center gap-2 group-hover:text-amber-300 transition">
                   PANIFICADORA MORUMBI
                   {isAdmin && (
                     <span className="hidden sm:inline-flex items-center gap-1 bg-amber-400 text-stone-950 text-[10px] font-black uppercase px-2 py-0.5 rounded-full">
@@ -45,11 +52,11 @@ export const Header: React.FC<HeaderProps> = ({
                     </span>
                   )}
                 </h1>
-                <p className="text-[11px] sm:text-xs text-amber-200 font-medium">
+                <p className="text-[11px] sm:text-xs text-amber-200 font-medium group-hover:text-amber-100 transition">
                   Sistema de Revenda de Pães
                 </p>
               </div>
-            </div>
+            </button>
           </div>
 
           {/* Right: Actions, PWA Button, User Info */}

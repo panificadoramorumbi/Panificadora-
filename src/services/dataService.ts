@@ -5,6 +5,7 @@ import {
   setDoc,
   addDoc,
   updateDoc,
+  deleteDoc,
   query,
   where,
   orderBy,
@@ -787,5 +788,17 @@ export async function updateUserProfile(
     });
   } catch (error) {
     handleFirestoreError(error, OperationType.UPDATE, `users/${uid}`);
+  }
+}
+
+/**
+ * Admin Permanently Delete Reseller Profile
+ */
+export async function deleteUserProfile(uid: string) {
+  try {
+    const docRef = doc(db, 'users', uid);
+    await deleteDoc(docRef);
+  } catch (error) {
+    handleFirestoreError(error, OperationType.DELETE, `users/${uid}`);
   }
 }

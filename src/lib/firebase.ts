@@ -8,7 +8,9 @@ import {
   onAuthStateChanged,
   User,
   signInWithPopup,
-  GoogleAuthProvider
+  GoogleAuthProvider,
+  setPersistence,
+  browserLocalPersistence,
 } from 'firebase/auth';
 import {
   getFirestore,
@@ -39,6 +41,13 @@ export const db: Firestore = getFirestore(app, firebaseConfig.firestoreDatabaseI
 export const defaultDb: Firestore = getFirestore(app);
 
 export const auth = getAuth(app);
+
+// Keep user logged in persistently (stay logged in across app restarts / browser closes)
+if (typeof window !== 'undefined') {
+  setPersistence(auth, browserLocalPersistence).catch((err) => {
+    console.warn('Falha ao definir persistência de login:', err);
+  });
+}
 
 // Error Handling Specification conforming to Skill requirements
 export enum OperationType {

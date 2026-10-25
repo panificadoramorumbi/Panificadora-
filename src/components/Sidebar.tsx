@@ -96,15 +96,20 @@ export const Sidebar: React.FC<SidebarProps> = ({
       >
         {/* Brand header */}
         <div className="p-5 border-b border-red-900/80 bg-red-950 flex items-center justify-between">
-          <div className="flex items-center gap-3">
-            <div className="w-10 h-10 rounded-xl bg-amber-500 text-stone-950 flex items-center justify-center font-black shadow-lg">
+          <button
+            type="button"
+            onClick={() => handleNavClick(isAdmin ? 'dashboard' : 'orders')}
+            className="flex items-center gap-3 text-left group cursor-pointer focus:outline-hidden"
+            title="Voltar ao início"
+          >
+            <div className="w-10 h-10 rounded-xl bg-amber-500 text-stone-950 flex items-center justify-center font-black shadow-lg group-hover:scale-105 transition">
               <Croissant className="w-6 h-6" />
             </div>
             <div>
-              <p className="font-black text-sm tracking-wide text-white">PANIFICADORA</p>
+              <p className="font-black text-sm tracking-wide text-white group-hover:text-amber-200 transition">PANIFICADORA</p>
               <p className="font-extrabold text-base tracking-widest text-amber-400">MORUMBI</p>
             </div>
-          </div>
+          </button>
         </div>
 
         {/* User Card */}
@@ -209,7 +214,12 @@ export const Sidebar: React.FC<SidebarProps> = ({
 
                     {onOpenNewClientModal && (
                       <button
-                        onClick={onOpenNewClientModal}
+                        onClick={() => {
+                          onOpenNewClientModal();
+                          if (window.innerWidth < 1024) {
+                            setIsOpen(false);
+                          }
+                        }}
                         className="w-full flex items-center gap-2 px-2.5 py-2 rounded-lg text-xs font-bold text-amber-300 hover:bg-red-900/60 transition mt-1"
                       >
                         <PlusCircle className="w-4 h-4 text-amber-400" />

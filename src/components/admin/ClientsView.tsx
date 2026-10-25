@@ -1,4 +1,4 @@
-import React, { useState, useMemo } from 'react';
+import React, { useState, useMemo, useEffect } from 'react';
 import {
   Users,
   Search,
@@ -25,10 +25,12 @@ import {
   Bell,
   Smartphone,
   Sparkles,
+  Trash2,
+  PlusCircle,
 } from 'lucide-react';
-import { UserProfile, Order, PaymentRecord, NotificationPreference } from '../../types';
+import { UserProfile, Order, PaymentRecord, NotificationPreference, ProductPrices } from '../../types';
 import { formatCurrency, formatDate, formatDateTime, formatPhone, buildWhatsAppLink } from '../../utils/formatters';
-import { updateUserProfile } from '../../services/dataService';
+import { updateUserProfile, deleteUserProfile, createOrder, sendNotification, DEFAULT_PRICES } from '../../services/dataService';
 import { useAuth } from '../../context/AuthContext';
 import { getPublicAppUrl } from '../../config/appConfig';
 
@@ -36,24 +38,60 @@ interface ClientsViewProps {
   clients: UserProfile[];
   orders: Order[];
   payments: PaymentRecord[];
+  prices?: ProductPrices;
   selectedClientId: string | null;
   onSelectClient: (clientId: string | null) => void;
   openNewModalInitially?: boolean;
+  onCloseNewModal?: () => void;
 }
 
 export const ClientsView: React.FC<ClientsViewProps> = ({
   clients,
   orders,
   payments,
+  prices = DEFAULT_PRICES,
   selectedClientId,
   onSelectClient,
   openNewModalInitially = false,
+  onCloseNewModal,
 }) => {
   const { registerNewReseller } = useAuth();
   const [searchTerm, setSearchTerm] = useState('');
   const [showNewModal, setShowNewModal] = useState(openNewModalInitially);
   const [showEditModal, setShowEditModal] = useState(false);
   const [editingClient, setEditingClient] = useState<UserProfile | null>(null);
+
+  // Sync openNewModalInitially when prop changes
+  useEffect(() => {
+    if (openNewModalInitially) {
+      setShowNewModal(true);
+    }
+  }, [openNewModalInitially]);
+
+  // Client deletion state
+  const [clientToDelete, setClientToDelete] = useState<UserProfile | null>(null);
+  const [isDeleting, setIsDeleting] = useState(false);
+
+  // Place order on behalf of client state
+  const [clientForOrder, setClientForOrder] = useState<UserProfile | null>(null);
+  const [orderDate, setOrderDate] = useState(() => new Date().toISOString().split('T')[0]);
+  const [deliveryDate, setDeliveryDate] = useState(() => {
+    const d = new Date();
+    d.setDate(d.getDate() + 1);
+    return d.toISOString().split('T')[0];
+  });
+  const [qtySalty, setQtySalty] = useState<number | string>(50);
+  const [qtySweet, setQtySweet] = useState<number | string>(0);
+  const [orderNotes, setOrderNotes] = useState('');
+  const [isCreatingOrder, setIsCreatingOrder] = useState(false);
+  const [orderSuccessMsg, setOrderSuccessMsg] = useState<string | null>(null);
+
+  // In-App Notification Modal State (Notify client on app / system notification bar)
+  const [clientForNotification, setClientForNotification] = useState<UserProfile | null>(null);
+  const [notifTitle, setNotifTitle] = useState('');
+  const [notifMessage, setNotifMessage] = useState('');
+  const [isSendingNotif, setIsSendingNotif] = useState(false);
+  const [notifSuccessMsg, setNotifSuccessMsg] = useState<string | null>(null);
 
   // New reseller form state (simplified without mandatory email)
   const [newName, setNewName] = useState('');
@@ -189,7 +227,7 @@ export const ClientsView: React.FC<ClientsViewProps> = ({
       setNewPassword('123456');
       setNewPref('both');
       setTimeout(() => {
-        setShowNewModal(false);
+        handleCloseNewModal();
         setFormSuccess(null);
       }, 1500);
     } catch (err: any) {
@@ -242,6 +280,137 @@ Para acessar:
         alert('Erro ao alterar status: ' + err);
       }
     }
+  };
+
+  // Permanently delete client profile from database
+  const handleDeleteClient = async () => {
+    if (!clientToDelete) return;
+    setIsDeleting(true);
+    try {
+      await deleteUserProfile(clientToDelete.uid);
+      if (selectedClientId === clientToDelete.uid) {
+        onSelectClient(null);
+      }
+      const deletedName = clientToDelete.displayName;
+      setClientToDelete(null);
+      alert(`Revendedor "${deletedName}" foi excluído permanentemente do sistema.`);
+    } catch (err: any) {
+      console.error(err);
+      alert('Erro ao excluir revendedor: ' + (err?.message || err));
+    } finally {
+      setIsDeleting(false);
+    }
+  };
+
+  // Create an order on behalf of a reseller (admin action)
+  const handleCreateOrderForClient = async (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!clientForOrder) return;
+
+    const sQty = Number(qtySalty) || 0;
+    const wQty = Number(qtySweet) || 0;
+
+    if (sQty <= 0 && wQty <= 0) {
+      alert('Informe ao menos uma quantidade de pão salgado ou doce.');
+      return;
+    }
+
+    setIsCreatingOrder(true);
+    try {
+      await createOrder({
+        resellerId: clientForOrder.uid,
+        resellerName: clientForOrder.displayName,
+        orderDate: orderDate || new Date().toISOString().split('T')[0],
+        deliveryDate: deliveryDate || new Date().toISOString().split('T')[0],
+        qtySaltyPickup: sQty,
+        qtySweetPickup: wQty,
+        notes: orderNotes
+          ? `[Lançado pela Panificadora]: ${orderNotes}`
+          : '[Lançado pela Panificadora]',
+        currentPrices: prices,
+      });
+
+      setOrderSuccessMsg(`Pedido lançado com sucesso para ${clientForOrder.displayName}!`);
+      setTimeout(() => {
+        setClientForOrder(null);
+        setOrderSuccessMsg(null);
+        setQtySalty(50);
+        setQtySweet(0);
+        setOrderNotes('');
+      }, 1500);
+    } catch (err: any) {
+      console.error(err);
+      alert('Erro ao criar pedido para o cliente: ' + (err?.message || err));
+    } finally {
+      setIsCreatingOrder(false);
+    }
+  };
+
+  // Open notification modal for a specific client
+  const handleOpenNotificationModal = (client: UserProfile) => {
+    setClientForNotification(client);
+    setNotifTitle('🥖 Pães quentinhos prontos para retirada!');
+    setNotifMessage(
+      `Olá ${client.displayName}! Sua fornada de pães acabou de sair e está quentinha te esperando na Panificadora Morumbi.`
+    );
+    setNotifSuccessMsg(null);
+  };
+
+  // Save client notification preference directly (keeps it saved in Firestore)
+  const handleSaveClientNotificationPref = async (clientId: string, pref: NotificationPreference) => {
+    try {
+      await updateUserProfile(clientId, { notificationPreference: pref });
+      if (clientForNotification && clientForNotification.uid === clientId) {
+        setClientForNotification({ ...clientForNotification, notificationPreference: pref });
+      }
+    } catch (err: any) {
+      console.error(err);
+      alert('Erro ao salvar preferência de notificação: ' + (err?.message || err));
+    }
+  };
+
+  // Send in-app notification that appears on client's device notification bar
+  const handleSendInAppNotification = async (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!clientForNotification) return;
+
+    if (!notifTitle.trim()) {
+      alert('Informe um título para a notificação.');
+      return;
+    }
+    if (!notifMessage.trim()) {
+      alert('Informe a mensagem da notificação.');
+      return;
+    }
+
+    setIsSendingNotif(true);
+    try {
+      await sendNotification({
+        targetUserId: clientForNotification.uid,
+        title: notifTitle.trim(),
+        message: notifMessage.trim(),
+        type: 'sistema',
+      });
+
+      setNotifSuccessMsg(
+        `Notificação enviada com sucesso para ${clientForNotification.displayName}! O alerta aparecerá na barra de notificações do celular dele.`
+      );
+
+      setTimeout(() => {
+        setClientForNotification(null);
+        setNotifSuccessMsg(null);
+      }, 2000);
+    } catch (err: any) {
+      console.error(err);
+      alert('Erro ao enviar notificação: ' + (err?.message || err));
+    } finally {
+      setIsSendingNotif(false);
+    }
+  };
+
+  const handleCloseNewModal = () => {
+    setShowNewModal(false);
+    onCloseNewModal?.();
   };
 
   return (
@@ -349,6 +518,17 @@ Para acessar:
 
                       <div className="text-right shrink-0">
                         <div className="flex items-center gap-1.5 justify-end">
+                          <button
+                            type="button"
+                            onClick={(e) => {
+                              e.stopPropagation();
+                              handleOpenNotificationModal(client);
+                            }}
+                            className="p-1 rounded-md text-stone-400 hover:text-red-800 hover:bg-stone-200 transition"
+                            title="Enviar notificação na barra do celular deste cliente"
+                          >
+                            <Bell className="w-3.5 h-3.5" />
+                          </button>
                           <span
                             className={`inline-block px-2 py-0.5 rounded-full text-[10px] font-bold ${
                               client.active
@@ -498,6 +678,50 @@ Para acessar:
 
                   {/* Actions for this client */}
                   <div className="flex flex-wrap items-center gap-2">
+                    <button
+                      type="button"
+                      onClick={() => {
+                        setClientForOrder(selectedClient);
+                        setOrderDate(new Date().toISOString().split('T')[0]);
+                        const d = new Date();
+                        d.setDate(d.getDate() + 1);
+                        setDeliveryDate(d.toISOString().split('T')[0]);
+                        setQtySalty(50);
+                        setQtySweet(0);
+                        setOrderNotes('');
+                      }}
+                      className="px-3.5 py-2 bg-amber-500 hover:bg-amber-600 text-stone-950 font-black rounded-xl shadow-xs transition flex items-center gap-1.5 text-xs"
+                      title="Lançar um novo pedido para este revendedor"
+                    >
+                      <PlusCircle className="w-3.5 h-3.5 text-stone-950" />
+                      <span>Fazer Pedido p/ Revendedor</span>
+                    </button>
+
+                    {/* Notify on App / Celular Action Button */}
+                    <button
+                      type="button"
+                      onClick={() => handleOpenNotificationModal(selectedClient)}
+                      className={`px-3.5 py-2 rounded-xl shadow-xs transition flex items-center gap-1.5 text-xs font-bold ${
+                        selectedClient.notificationPreference === 'in_app' ||
+                        selectedClient.notificationPreference === 'both' ||
+                        !selectedClient.notificationPreference
+                          ? 'bg-red-800 hover:bg-red-900 text-white'
+                          : 'bg-stone-100 hover:bg-stone-200 text-stone-700 border border-stone-300'
+                      }`}
+                      title="Enviar notificação push diretamente para a barra de avisos do celular deste revendedor"
+                    >
+                      <Smartphone className="w-3.5 h-3.5" />
+                      <span>Notificar no App</span>
+                      {(selectedClient.notificationPreference === 'in_app' ||
+                        selectedClient.notificationPreference === 'both' ||
+                        !selectedClient.notificationPreference) && (
+                        <span
+                          className="w-2 h-2 rounded-full bg-emerald-400 animate-pulse"
+                          title="Barra de avisos do celular ativada"
+                        />
+                      )}
+                    </button>
+
                     {selectedClient.phone && (
                       <button
                         type="button"
@@ -506,18 +730,29 @@ Para acessar:
                         title="Enviar dados de acesso (usuário e senha) no WhatsApp do revendedor"
                       >
                         <Share2 className="w-3.5 h-3.5" />
-                        <span>Enviar Acesso WhatsApp</span>
+                        <span>Enviar Acesso Zap</span>
                       </button>
                     )}
+
                     <button
                       onClick={() => handleToggleActive(selectedClient)}
                       className={`px-3 py-2 rounded-xl text-xs font-bold border transition ${
                         selectedClient.active
-                          ? 'border-rose-300 text-rose-800 hover:bg-rose-50'
+                          ? 'border-amber-300 text-amber-800 hover:bg-amber-50'
                           : 'border-emerald-300 text-emerald-800 hover:bg-emerald-50'
                       }`}
                     >
-                      {selectedClient.active ? 'Desativar Conta' : 'Reativar Conta'}
+                      {selectedClient.active ? 'Desativar' : 'Reativar'}
+                    </button>
+
+                    <button
+                      type="button"
+                      onClick={() => setClientToDelete(selectedClient)}
+                      className="px-3 py-2 rounded-xl text-xs font-bold border border-rose-300 text-rose-700 hover:bg-rose-50 hover:text-rose-900 transition flex items-center gap-1.5"
+                      title="Excluir revendedor permanentemente do banco de dados"
+                    >
+                      <Trash2 className="w-3.5 h-3.5 text-rose-600" />
+                      <span>Excluir Definitivamente</span>
                     </button>
                   </div>
                 </div>
@@ -701,7 +936,7 @@ Para acessar:
                 </div>
               </div>
               <button
-                onClick={() => setShowNewModal(false)}
+                onClick={handleCloseNewModal}
                 className="p-1 rounded-full text-stone-400 hover:text-stone-700"
               >
                 <X className="w-5 h-5" />
@@ -901,7 +1136,7 @@ Para acessar:
               <div className="pt-2 flex items-center justify-end gap-2">
                 <button
                   type="button"
-                  onClick={() => setShowNewModal(false)}
+                  onClick={handleCloseNewModal}
                   className="px-4 py-2.5 text-xs font-bold text-stone-600 hover:text-stone-900"
                 >
                   Cancelar
@@ -912,6 +1147,506 @@ Para acessar:
                   className="px-5 py-2.5 bg-red-800 hover:bg-red-900 text-white text-xs font-black uppercase rounded-xl shadow-md transition disabled:opacity-50"
                 >
                   {isSubmitting ? 'Cadastrando...' : 'Salvar Revendedor'}
+                </button>
+              </div>
+            </form>
+          </div>
+        </div>
+      )}
+
+      {/* Modal: Excluir Revendedor Definitivamente */}
+      {clientToDelete && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 backdrop-blur-xs p-4">
+          <div className="w-full max-w-md bg-white rounded-3xl p-6 sm:p-7 shadow-2xl border border-red-200">
+            <div className="flex items-center gap-3 pb-3 border-b border-stone-100">
+              <div className="w-10 h-10 rounded-2xl bg-rose-100 text-rose-700 flex items-center justify-center shrink-0">
+                <Trash2 className="w-5 h-5" />
+              </div>
+              <div>
+                <h3 className="text-base font-black text-stone-900">Excluir Revendedor?</h3>
+                <p className="text-xs text-rose-600 font-semibold">Ação irreversível no banco de dados</p>
+              </div>
+            </div>
+
+            <div className="mt-4 space-y-3 text-xs text-stone-600">
+              <p>
+                Tem certeza que deseja apagar permanentemente o cadastro de{' '}
+                <strong className="text-stone-950 font-bold">{clientToDelete.displayName}</strong>?
+              </p>
+              <div className="bg-stone-50 p-3 rounded-xl border border-stone-200 space-y-1 text-[11px]">
+                <p>
+                  <strong>Usuário:</strong> {clientToDelete.username || clientToDelete.email}
+                </p>
+                {clientToDelete.phone && (
+                  <p>
+                    <strong>WhatsApp:</strong> {formatPhone(clientToDelete.phone)}
+                  </p>
+                )}
+              </div>
+              <p className="text-[11px] text-stone-500 italic">
+                * Os pedidos anteriores vinculados a este revendedor continuarão preservados nos registros de auditoria e relatórios com o nome dele.
+              </p>
+            </div>
+
+            <div className="mt-6 flex items-center justify-end gap-2.5">
+              <button
+                type="button"
+                disabled={isDeleting}
+                onClick={() => setClientToDelete(null)}
+                className="px-4 py-2.5 text-xs font-bold text-stone-600 hover:text-stone-900 rounded-xl"
+              >
+                Cancelar
+              </button>
+              <button
+                type="button"
+                disabled={isDeleting}
+                onClick={handleDeleteClient}
+                className="px-5 py-2.5 bg-rose-700 hover:bg-rose-800 text-white text-xs font-black uppercase rounded-xl shadow-md transition disabled:opacity-50 flex items-center gap-2"
+              >
+                <Trash2 className="w-3.5 h-3.5" />
+                <span>{isDeleting ? 'Excluindo...' : 'Sim, Excluir Definitivamente'}</span>
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* Modal: Lançar Pedido pelo Cliente (Ação do Patrão) */}
+      {clientForOrder && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 backdrop-blur-xs p-4 overflow-y-auto">
+          <div className="w-full max-w-lg bg-white rounded-3xl p-6 sm:p-7 shadow-2xl border border-stone-200 my-8">
+            <div className="flex items-center justify-between pb-4 border-b border-stone-100">
+              <div className="flex items-center gap-2.5">
+                <div className="w-10 h-10 rounded-2xl bg-amber-500 text-stone-950 flex items-center justify-center font-bold">
+                  <ShoppingBag className="w-5 h-5" />
+                </div>
+                <div>
+                  <h3 className="text-base font-black text-stone-900">Novo Pedido p/ Revendedor</h3>
+                  <p className="text-xs text-amber-700 font-bold">{clientForOrder.displayName}</p>
+                </div>
+              </div>
+              <button
+                onClick={() => setClientForOrder(null)}
+                className="p-1 rounded-full text-stone-400 hover:text-stone-700"
+              >
+                <X className="w-5 h-5" />
+              </button>
+            </div>
+
+            {orderSuccessMsg && (
+              <div className="mt-4 p-3 rounded-xl bg-emerald-50 border border-emerald-200 text-xs text-emerald-800 font-bold flex items-center gap-2">
+                <CheckCircle className="w-4 h-4 text-emerald-600 shrink-0" />
+                <span>{orderSuccessMsg}</span>
+              </div>
+            )}
+
+            <form onSubmit={handleCreateOrderForClient} className="space-y-4 mt-4">
+              <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+                <div>
+                  <label className="block text-xs font-bold text-stone-700 uppercase mb-1">
+                    Data do Pedido
+                  </label>
+                  <input
+                    type="date"
+                    required
+                    value={orderDate}
+                    onChange={(e) => setOrderDate(e.target.value)}
+                    className="w-full px-3 py-2 bg-stone-50 border border-stone-300 rounded-xl text-xs font-bold text-stone-900 focus:outline-hidden focus:ring-2 focus:ring-amber-500"
+                  />
+                </div>
+
+                <div>
+                  <label className="block text-xs font-bold text-stone-700 uppercase mb-1">
+                    Data de Entrega / Retirada *
+                  </label>
+                  <input
+                    type="date"
+                    required
+                    value={deliveryDate}
+                    onChange={(e) => setDeliveryDate(e.target.value)}
+                    className="w-full px-3 py-2 bg-stone-50 border border-stone-300 rounded-xl text-xs font-bold text-stone-900 focus:outline-hidden focus:ring-2 focus:ring-amber-500"
+                  />
+                </div>
+              </div>
+
+              {/* Quantities */}
+              <div className="grid grid-cols-1 sm:grid-cols-2 gap-3 pt-1">
+                {/* Salty */}
+                <div className="bg-stone-50 p-3.5 rounded-2xl border border-stone-200">
+                  <div className="flex items-center justify-between mb-1.5">
+                    <span className="text-xs font-bold text-stone-800">Pão Salgado (Francês)</span>
+                    <span className="text-[10px] font-extrabold text-amber-800">
+                      {formatCurrency(prices?.priceSalty ?? DEFAULT_PRICES.priceSalty)} / un
+                    </span>
+                  </div>
+                  <input
+                    type="number"
+                    min="0"
+                    step="1"
+                    value={qtySalty}
+                    onChange={(e) => setQtySalty(e.target.value)}
+                    placeholder="0"
+                    className="w-full px-3 py-2 bg-white border border-stone-300 rounded-xl text-sm font-black text-stone-900 focus:outline-hidden focus:ring-2 focus:ring-amber-500"
+                  />
+                  <div className="flex items-center gap-1.5 mt-2">
+                    {[20, 50, 100].map((q) => (
+                      <button
+                        key={q}
+                        type="button"
+                        onClick={() => setQtySalty((prev) => (Number(prev) || 0) + q)}
+                        className="flex-1 py-1 text-[10px] font-bold bg-white hover:bg-stone-100 border border-stone-200 rounded-lg text-stone-700"
+                      >
+                        +{q}
+                      </button>
+                    ))}
+                    <button
+                      type="button"
+                      onClick={() => setQtySalty(0)}
+                      className="px-2 py-1 text-[10px] font-bold bg-white hover:bg-rose-50 border border-stone-200 rounded-lg text-rose-600"
+                    >
+                      Zerar
+                    </button>
+                  </div>
+                </div>
+
+                {/* Sweet */}
+                <div className="bg-stone-50 p-3.5 rounded-2xl border border-stone-200">
+                  <div className="flex items-center justify-between mb-1.5">
+                    <span className="text-xs font-bold text-stone-800">Pão Doce</span>
+                    <span className="text-[10px] font-extrabold text-amber-800">
+                      {formatCurrency(prices?.priceSweet ?? DEFAULT_PRICES.priceSweet)} / un
+                    </span>
+                  </div>
+                  <input
+                    type="number"
+                    min="0"
+                    step="1"
+                    value={qtySweet}
+                    onChange={(e) => setQtySweet(e.target.value)}
+                    placeholder="0"
+                    className="w-full px-3 py-2 bg-white border border-stone-300 rounded-xl text-sm font-black text-stone-900 focus:outline-hidden focus:ring-2 focus:ring-amber-500"
+                  />
+                  <div className="flex items-center gap-1.5 mt-2">
+                    {[10, 20, 50].map((q) => (
+                      <button
+                        key={q}
+                        type="button"
+                        onClick={() => setQtySweet((prev) => (Number(prev) || 0) + q)}
+                        className="flex-1 py-1 text-[10px] font-bold bg-white hover:bg-stone-100 border border-stone-200 rounded-lg text-stone-700"
+                      >
+                        +{q}
+                      </button>
+                    ))}
+                    <button
+                      type="button"
+                      onClick={() => setQtySweet(0)}
+                      className="px-2 py-1 text-[10px] font-bold bg-white hover:bg-rose-50 border border-stone-200 rounded-lg text-rose-600"
+                    >
+                      Zerar
+                    </button>
+                  </div>
+                </div>
+              </div>
+
+              {/* Order total preview */}
+              <div className="bg-amber-50 border border-amber-200 p-3.5 rounded-2xl flex items-center justify-between">
+                <div>
+                  <p className="text-[10px] font-extrabold uppercase text-amber-900 tracking-wider">
+                    Total Estimado do Pedido
+                  </p>
+                  <p className="text-xs text-stone-600">
+                    {Number(qtySalty) || 0} salgados + {Number(qtySweet) || 0} doces
+                  </p>
+                </div>
+                <p className="text-xl font-black text-amber-950">
+                  {formatCurrency(
+                    (Number(qtySalty) || 0) * (prices?.priceSalty ?? DEFAULT_PRICES.priceSalty) +
+                      (Number(qtySweet) || 0) * (prices?.priceSweet ?? DEFAULT_PRICES.priceSweet)
+                  )}
+                </p>
+              </div>
+
+              {/* Notes */}
+              <div>
+                <label className="block text-xs font-bold text-stone-700 uppercase mb-1">
+                  Observações / Detalhes de Produção (Opcional)
+                </label>
+                <textarea
+                  rows={2}
+                  placeholder="Ex: Entregar quentinho às 06:00, pães um pouco mais morenos..."
+                  value={orderNotes}
+                  onChange={(e) => setOrderNotes(e.target.value)}
+                  className="w-full px-3 py-2 bg-stone-50 border border-stone-200 rounded-xl text-xs text-stone-800 focus:outline-hidden focus:ring-2 focus:ring-amber-500 focus:bg-white resize-none"
+                />
+              </div>
+
+              <div className="pt-2 flex items-center justify-end gap-2.5">
+                <button
+                  type="button"
+                  disabled={isCreatingOrder}
+                  onClick={() => setClientForOrder(null)}
+                  className="px-4 py-2.5 text-xs font-bold text-stone-600 hover:text-stone-900 rounded-xl"
+                >
+                  Cancelar
+                </button>
+                <button
+                  type="submit"
+                  disabled={isCreatingOrder}
+                  className="px-5 py-2.5 bg-amber-500 hover:bg-amber-600 text-stone-950 text-xs font-black uppercase rounded-xl shadow-md transition disabled:opacity-50 flex items-center gap-2"
+                >
+                  <ShoppingBag className="w-3.5 h-3.5" />
+                  <span>{isCreatingOrder ? 'Lançando...' : 'Confirmar e Lançar Pedido'}</span>
+                </button>
+              </div>
+            </form>
+          </div>
+        </div>
+      )}
+
+      {/* MODAL: ENVIAR NOTIFICAÇÃO NO APLICATIVO / BARRA DO CELULAR */}
+      {clientForNotification && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 backdrop-blur-xs p-4">
+          <div className="w-full max-w-lg bg-white rounded-3xl p-6 sm:p-7 shadow-2xl border border-stone-200 max-h-[92vh] overflow-y-auto">
+            <div className="flex items-center justify-between pb-4 border-b border-stone-100">
+              <div className="flex items-center gap-3">
+                <div className="w-11 h-11 rounded-2xl bg-red-800 text-amber-300 flex items-center justify-center shadow-md">
+                  <Smartphone className="w-6 h-6" />
+                </div>
+                <div>
+                  <h3 className="text-base font-black text-stone-900">
+                    Notificar no Aplicativo / Celular
+                  </h3>
+                  <p className="text-xs text-stone-500">
+                    Destinatário: <strong className="text-stone-900">{clientForNotification.displayName}</strong>
+                  </p>
+                </div>
+              </div>
+              <button
+                type="button"
+                onClick={() => {
+                  setClientForNotification(null);
+                  setNotifSuccessMsg(null);
+                }}
+                className="p-1.5 rounded-full text-stone-400 hover:text-stone-700"
+              >
+                <X className="w-5 h-5" />
+              </button>
+            </div>
+
+            {/* Success message banner */}
+            {notifSuccessMsg && (
+              <div className="mt-4 p-3.5 rounded-2xl bg-emerald-50 border border-emerald-200 text-xs text-emerald-900 font-bold flex items-start gap-2 shadow-xs">
+                <CheckCircle className="w-4 h-4 text-emerald-600 shrink-0 mt-0.5" />
+                <span>{notifSuccessMsg}</span>
+              </div>
+            )}
+
+            <form onSubmit={handleSendInAppNotification} className="space-y-4 mt-5 text-xs">
+              {/* Preference selector to keep saved */}
+              <div className="p-3.5 bg-stone-50 rounded-2xl border border-stone-200 space-y-2">
+                <div className="flex items-center justify-between">
+                  <span className="text-[11px] font-bold text-stone-700 uppercase flex items-center gap-1.5">
+                    <Bell className="w-3.5 h-3.5 text-red-800" />
+                    Preferência Salva do Cliente:
+                  </span>
+                  <span className="text-[10px] text-stone-500 font-medium italic">
+                    (Salvo no banco de dados)
+                  </span>
+                </div>
+
+                <div className="grid grid-cols-2 sm:grid-cols-4 gap-1.5">
+                  {(['in_app', 'whatsapp', 'both', 'none'] as NotificationPreference[]).map((prefKey) => {
+                    const currentPref = clientForNotification.notificationPreference || 'both';
+                    const isSelected = currentPref === prefKey;
+                    const labels: Record<NotificationPreference, string> = {
+                      in_app: '📱 Só no App',
+                      whatsapp: '💬 Só no Zap',
+                      both: '⚡ Ambos',
+                      none: '🔕 Silêncio',
+                    };
+
+                    return (
+                      <button
+                        key={prefKey}
+                        type="button"
+                        onClick={() => handleSaveClientNotificationPref(clientForNotification.uid, prefKey)}
+                        className={`py-1.5 px-2 rounded-xl text-[11px] font-black border transition text-center ${
+                          isSelected
+                            ? 'bg-red-800 text-white border-red-800 shadow-xs'
+                            : 'bg-white text-stone-700 border-stone-200 hover:bg-stone-100'
+                        }`}
+                      >
+                        {labels[prefKey]}
+                      </button>
+                    );
+                  })}
+                </div>
+
+                {/* Status explanation */}
+                <p className="text-[10px] text-stone-500 mt-1">
+                  {(clientForNotification.notificationPreference === 'in_app' ||
+                    clientForNotification.notificationPreference === 'both' ||
+                    !clientForNotification.notificationPreference) ? (
+                    <span className="text-emerald-700 font-bold flex items-center gap-1">
+                      <CheckCircle className="w-3 h-3 text-emerald-600" />
+                      Notificação no aplicativo ativada! O aviso aparecerá na barra de notificações do celular.
+                    </span>
+                  ) : clientForNotification.notificationPreference === 'whatsapp' ? (
+                    <span className="text-amber-700 font-medium">
+                      ⚠️ O cliente está marcado para receber apenas pelo WhatsApp. Você pode enviar o aviso no app mesmo assim ou selecionar "Ambos" acima.
+                    </span>
+                  ) : (
+                    <span className="text-stone-500 italic">
+                      🔕 Notificações estão desativadas para este cliente.
+                    </span>
+                  )}
+                </p>
+              </div>
+
+              {/* Quick Preset Buttons */}
+              <div>
+                <label className="block text-[11px] font-bold text-stone-700 uppercase mb-1.5">
+                  Modelos Rápidos da Padaria (Clique para Preencher):
+                </label>
+                <div className="grid grid-cols-2 gap-2">
+                  <button
+                    type="button"
+                    onClick={() => {
+                      setNotifTitle('🥖 Pães quentinhos prontos para retirada!');
+                      setNotifMessage(
+                        `Olá ${clientForNotification.displayName}! Sua fornada de pães acabou de sair e está quentinha te esperando na Panificadora Morumbi.`
+                      );
+                    }}
+                    className="p-2.5 text-left bg-amber-50 hover:bg-amber-100/80 border border-amber-200 rounded-xl transition text-[11px] font-bold text-amber-950 flex items-center gap-2"
+                  >
+                    <span className="text-base">🥖</span>
+                    <div>
+                      <p className="leading-tight">Pães Quentinhos</p>
+                      <span className="text-[10px] font-normal text-amber-800">Prontos p/ retirada</span>
+                    </div>
+                  </button>
+
+                  <button
+                    type="button"
+                    onClick={() => {
+                      setNotifTitle('⏰ Lembrete: Envie suas sobras de hoje');
+                      setNotifMessage(
+                        `Olá ${clientForNotification.displayName}! Não se esqueça de registrar as sobras de hoje no aplicativo para que possamos fechar sua conta com o valor exato.`
+                      );
+                    }}
+                    className="p-2.5 text-left bg-red-50 hover:bg-red-100/80 border border-red-200 rounded-xl transition text-[11px] font-bold text-red-950 flex items-center gap-2"
+                  >
+                    <span className="text-base">⏰</span>
+                    <div>
+                      <p className="leading-tight">Lembrete de Sobras</p>
+                      <span className="text-[10px] font-normal text-red-800">Fechamento do dia</span>
+                    </div>
+                  </button>
+
+                  <button
+                    type="button"
+                    onClick={() => {
+                      setNotifTitle('💰 Acerto de contas disponível no aplicativo');
+                      setNotifMessage(
+                        `Olá ${clientForNotification.displayName}! Seu extrato financeiro foi atualizado na Panificadora Morumbi. Acesse a aba Financeiro para conferir.`
+                      );
+                    }}
+                    className="p-2.5 text-left bg-emerald-50 hover:bg-emerald-100/80 border border-emerald-200 rounded-xl transition text-[11px] font-bold text-emerald-950 flex items-center gap-2"
+                  >
+                    <span className="text-base">💰</span>
+                    <div>
+                      <p className="leading-tight">Acerto Financeiro</p>
+                      <span className="text-[10px] font-normal text-emerald-800">Extrato disponível</span>
+                    </div>
+                  </button>
+
+                  <button
+                    type="button"
+                    onClick={() => {
+                      setNotifTitle('🍞 Aviso da Panificadora Morumbi');
+                      setNotifMessage(
+                        `Informamos que nossa produção de pães para amanhã já começou. Garanta que seus pedidos estejam confirmados no aplicativo!`
+                      );
+                    }}
+                    className="p-2.5 text-left bg-stone-100 hover:bg-stone-200 border border-stone-300 rounded-xl transition text-[11px] font-bold text-stone-900 flex items-center gap-2"
+                  >
+                    <span className="text-base">📢</span>
+                    <div>
+                      <p className="leading-tight">Aviso de Fornada</p>
+                      <span className="text-[10px] font-normal text-stone-600">Produção de amanhã</span>
+                    </div>
+                  </button>
+                </div>
+              </div>
+
+              {/* Title Input */}
+              <div>
+                <label className="block text-[11px] font-bold text-stone-700 uppercase mb-1">
+                  Título da Notificação *
+                </label>
+                <input
+                  type="text"
+                  required
+                  value={notifTitle}
+                  onChange={(e) => setNotifTitle(e.target.value)}
+                  placeholder="Ex: Pães quentinhos prontos!"
+                  className="w-full px-3.5 py-2.5 bg-stone-50 border border-stone-300 rounded-xl font-bold text-xs text-stone-900 focus:outline-hidden focus:ring-2 focus:ring-red-800 focus:bg-white"
+                />
+              </div>
+
+              {/* Message Body */}
+              <div>
+                <label className="block text-[11px] font-bold text-stone-700 uppercase mb-1">
+                  Mensagem (Aparece na barra de notificações do celular) *
+                </label>
+                <textarea
+                  required
+                  rows={3}
+                  value={notifMessage}
+                  onChange={(e) => setNotifMessage(e.target.value)}
+                  placeholder="Digite a mensagem que o cliente lerá na notificação..."
+                  className="w-full px-3.5 py-2.5 bg-stone-50 border border-stone-300 rounded-xl text-xs text-stone-900 focus:outline-hidden focus:ring-2 focus:ring-red-800 focus:bg-white resize-none font-medium"
+                />
+              </div>
+
+              {/* System Notification Bar Preview */}
+              <div className="p-3 bg-stone-900 text-white rounded-2xl border border-stone-800 space-y-1 shadow-inner">
+                <div className="flex items-center justify-between text-[10px] text-amber-400 font-bold">
+                  <span className="flex items-center gap-1.5">
+                    <Croissant className="w-3.5 h-3.5 text-amber-400" />
+                    Panificadora Morumbi • agora
+                  </span>
+                  <span className="text-stone-400 text-[9px]">Barra de Notificação</span>
+                </div>
+                <p className="font-bold text-xs text-white truncate">
+                  {notifTitle || 'Título da notificação'}
+                </p>
+                <p className="text-[11px] text-stone-300 line-clamp-2 leading-tight">
+                  {notifMessage || 'O texto da mensagem aparecerá aqui no celular do cliente.'}
+                </p>
+              </div>
+
+              {/* Actions */}
+              <div className="pt-2 flex items-center justify-end gap-2.5 border-t border-stone-100">
+                <button
+                  type="button"
+                  disabled={isSendingNotif}
+                  onClick={() => {
+                    setClientForNotification(null);
+                    setNotifSuccessMsg(null);
+                  }}
+                  className="px-4 py-2.5 text-xs font-bold text-stone-600 hover:text-stone-900 rounded-xl"
+                >
+                  Cancelar
+                </button>
+
+                <button
+                  type="submit"
+                  disabled={isSendingNotif}
+                  className="px-5 py-2.5 bg-red-800 hover:bg-red-900 text-white text-xs font-black uppercase rounded-xl shadow-md transition disabled:opacity-50 flex items-center gap-2 active:scale-95"
+                >
+                  <Smartphone className="w-3.5 h-3.5 text-amber-300" />
+                  <span>{isSendingNotif ? 'Enviando...' : 'Enviar Notificação no Celular'}</span>
                 </button>
               </div>
             </form>

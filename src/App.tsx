@@ -22,6 +22,10 @@ import {
   subscribeNotifications,
   DEFAULT_PRICES,
 } from './services/dataService';
+import {
+  showSystemNotification,
+  playNotificationTone,
+} from './services/notificationService';
 import { Order, UserProfile, PaymentRecord, AuditLog, ProductPrices, InAppNotification } from './types';
 import { Croissant } from 'lucide-react';
 
@@ -47,6 +51,46 @@ const MainApp: React.FC = () => {
   const [auditLogs, setAuditLogs] = useState<AuditLog[]>([]);
   const [prices, setPrices] = useState<ProductPrices>(DEFAULT_PRICES);
   const [notifications, setNotifications] = useState<InAppNotification[]>([]);
+
+  // Track known notifications so we only trigger system bar alerts on NEW arrivals
+  const initialNotifsLoadedRef = React.useRef(false);
+  const seenNotifIdsRef = React.useRef<Set<string>>(new Set());
+
+  // Trigger system notification bar and sound when new notification arrives
+  useEffect(() => {
+    if (notifications.length === 0 && !initialNotifsLoadedRef.current) {
+      return;
+    }
+
+    // First snapshot load: populate without ringing all past alerts
+    if (!initialNotifsLoadedRef.current) {
+      notifications.forEach((n) => seenNotifIdsRef.current.add(n.id));
+      initialNotifsLoadedRef.current = true;
+      return;
+    }
+
+    // Subsequent snapshots: find new unread notifications targeted at this user
+    const newArrivals = notifications.filter(
+      (n) => !seenNotifIdsRef.current.has(n.id) && !n.read
+    );
+
+    if (newArrivals.length > 0) {
+      newArrivals.forEach((n) => {
+        seenNotifIdsRef.current.add(n.id);
+
+        const pref = userProfile?.notificationPreference || 'both';
+        // Only trigger system notification bar if user didn't disable app notifications
+        if (pref !== 'none' && pref !== 'whatsapp') {
+          showSystemNotification(n.title, {
+            body: n.message,
+            icon: '/pwa-192x192.png',
+            tag: `notif-${n.id}`,
+          });
+          playNotificationTone();
+        }
+      });
+    }
+  }, [notifications, userProfile]);
 
   // Subscriptions setup
   useEffect(() => {
@@ -119,6 +163,17 @@ const MainApp: React.FC = () => {
           if (isAdmin) setAdminView('notifications');
           else setResellerTab('notifications');
         }}
+        onGoHome={() => {
+          if (isAdmin) {
+            setAdminView('dashboard');
+            setSelectedClientId(null);
+          } else {
+            setResellerTab('orders');
+          }
+          if (sidebarOpen) {
+            setSidebarOpen(false);
+          }
+        }}
       />
 
       <div className="flex-1 flex">
@@ -140,6 +195,7 @@ const MainApp: React.FC = () => {
             setAdminView('clients');
           }}
           onOpenNewClientModal={() => {
+            setSelectedClientId(null);
             setAdminView('clients');
             setOpenNewClientModal(true);
           }}
@@ -167,9 +223,11 @@ const MainApp: React.FC = () => {
                   clients={clients}
                   orders={orders}
                   payments={payments}
+                  prices={prices}
                   selectedClientId={selectedClientId}
                   onSelectClient={(id) => setSelectedClientId(id)}
                   openNewModalInitially={openNewClientModal}
+                  onCloseNewModal={() => setOpenNewClientModal(false)}
                 />
               )}
 
@@ -177,6 +235,7 @@ const MainApp: React.FC = () => {
                 <OrdersView
                   orders={orders}
                   clients={clients}
+                  prices={prices}
                   onOpenAuditCorrection={(order) => {
                     setOrderToCorrect(order);
                     setAdminView('audit');
