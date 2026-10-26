@@ -16,10 +16,16 @@ import {
   Copy,
   Check,
   Globe,
+  Sparkles,
+  X,
+  AlertCircle,
+  CheckCircle,
 } from 'lucide-react';
 import { Order, UserProfile, PaymentRecord } from '../../types';
 import { formatCurrency, formatDate, buildWhatsAppLink } from '../../utils/formatters';
 import { getPublicAppUrl } from '../../config/appConfig';
+import { recordLeftovers, DEFAULT_PRICES } from '../../services/dataService';
+import { useAuth } from '../../context/AuthContext';
 
 interface DashboardViewProps {
   orders: Order[];
@@ -54,6 +60,75 @@ Olá! Segue o link do nosso aplicativo para você fazer pedidos de pães e acomp
 Abra pelo navegador do celular e clique em "Instalar Aplicativo" para salvar na sua tela inicial!`;
     const url = buildWhatsAppLink('', text);
     window.open(url, '_blank');
+  };
+
+  // Direct Leftovers Recording for Admin
+  const { currentUser } = useAuth();
+  const [orderForLeftovers, setOrderForLeftovers] = useState<Order | null>(null);
+  const [adminSaltyLeftover, setAdminSaltyLeftover] = useState<number>(0);
+  const [adminSweetLeftover, setAdminSweetLeftover] = useState<number>(0);
+  const [isSavingAdminLeftovers, setIsSavingAdminLeftovers] = useState(false);
+  const [adminLeftoverError, setAdminLeftoverError] = useState<string | null>(null);
+  const [adminLeftoverSuccess, setAdminLeftoverSuccess] = useState<string | null>(null);
+
+  const handleOpenRecordLeftovers = (order: Order, e?: React.MouseEvent) => {
+    if (e) e.stopPropagation();
+    setOrderForLeftovers(order);
+    setAdminSaltyLeftover(0);
+    setAdminSweetLeftover(0);
+    setAdminLeftoverError(null);
+    setAdminLeftoverSuccess(null);
+  };
+
+  const handleSaveAdminLeftovers = async (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!orderForLeftovers || !currentUser) return;
+    setAdminLeftoverError(null);
+
+    const sLeft = Number(adminSaltyLeftover) || 0;
+    const wLeft = Number(adminSweetLeftover) || 0;
+
+    if (sLeft < 0 || wLeft < 0) {
+      setAdminLeftoverError('A quantidade de sobras não pode ser negativa.');
+      return;
+    }
+    if (sLeft > orderForLeftovers.qtySaltyPickup) {
+      setAdminLeftoverError(
+        `A sobra de pão salgado (${sLeft}) não pode ser maior que a retirada (${orderForLeftovers.qtySaltyPickup}).`
+      );
+      return;
+    }
+    if (wLeft > orderForLeftovers.qtySweetPickup) {
+      setAdminLeftoverError(
+        `A sobra de pão doce (${wLeft}) não pode ser maior que a retirada (${orderForLeftovers.qtySweetPickup}).`
+      );
+      return;
+    }
+
+    setIsSavingAdminLeftovers(true);
+    try {
+      await recordLeftovers({
+        order: orderForLeftovers,
+        qtySaltyLeftover: sLeft,
+        qtySweetLeftover: wLeft,
+        recordedByUid: currentUser.uid,
+        recordedByName: 'Administrador (Padaria)',
+      });
+
+      setAdminLeftoverSuccess(
+        `Sobras gravadas com sucesso para ${orderForLeftovers.resellerName}! O valor final foi atualizado.`
+      );
+
+      setTimeout(() => {
+        setOrderForLeftovers(null);
+        setAdminLeftoverSuccess(null);
+      }, 1500);
+    } catch (err: any) {
+      console.error(err);
+      setAdminLeftoverError('Erro ao gravar sobras: ' + (err?.message || err));
+    } finally {
+      setIsSavingAdminLeftovers(false);
+    }
   };
 
   // Filter orders according to period
@@ -411,23 +486,32 @@ Abra pelo navegador do celular e clique em "Instalar Aplicativo" para salvar na 
               .map((order) => (
                 <div
                   key={order.id}
-                  onClick={() => onNavigate('orders')}
-                  className="bg-white p-3.5 rounded-2xl border border-amber-200 shadow-xs flex items-center justify-between cursor-pointer hover:border-red-800 transition"
+                  className="bg-white p-4 rounded-2xl border border-amber-200 shadow-xs flex flex-col justify-between hover:border-amber-400 transition space-y-2.5"
                 >
-                  <div>
-                    <p className="text-xs font-bold text-stone-900">{order.resellerName}</p>
-                    <p className="text-[11px] text-stone-500">
-                      {order.orderNumber} • Entrega: {formatDate(order.deliveryDate)}
-                    </p>
-                    <p className="text-[11px] font-semibold text-amber-900 mt-1">
-                      Retirada: {order.qtySaltyPickup} salg. + {order.qtySweetPickup} doces
-                    </p>
-                  </div>
-                  <div className="text-right">
-                    <span className="inline-block px-2 py-1 rounded-lg text-[10px] font-bold bg-amber-100 text-amber-800">
+                  <div className="flex items-start justify-between">
+                    <div>
+                      <p className="text-xs font-black text-stone-900">{order.resellerName}</p>
+                      <p className="text-[11px] text-stone-500">
+                        {order.orderNumber} • Entrega: {formatDate(order.deliveryDate)}
+                      </p>
+                    </div>
+                    <span className="inline-block px-2 py-0.5 rounded-lg text-[10px] font-bold bg-amber-100 text-amber-800">
                       Pendente
                     </span>
                   </div>
+
+                  <div className="text-[11px] font-semibold text-amber-950 bg-amber-50/70 p-2.5 rounded-xl border border-amber-100">
+                    Retirada: <strong>{order.qtySaltyPickup} salg. + {order.qtySweetPickup} doces</strong>
+                  </div>
+
+                  <button
+                    type="button"
+                    onClick={(e) => handleOpenRecordLeftovers(order, e)}
+                    className="w-full py-2 bg-amber-500 hover:bg-amber-600 text-stone-950 font-black rounded-xl text-xs flex items-center justify-center gap-1.5 shadow-2xs transition active:scale-95"
+                  >
+                    <Sparkles className="w-3.5 h-3.5 text-stone-950" />
+                    <span>Lançar Sobras Agora</span>
+                  </button>
                 </div>
               ))}
           </div>
@@ -508,6 +592,199 @@ Abra pelo navegador do celular e clique em "Instalar Aplicativo" para salvar na 
           </div>
         )}
       </div>
+
+      {/* Modal: Administrador Lançar Sobras pelo Cliente no Dashboard */}
+      {orderForLeftovers && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 backdrop-blur-xs p-4 overflow-y-auto">
+          <div className="w-full max-w-lg bg-white rounded-3xl p-6 sm:p-7 shadow-2xl border border-stone-200 my-8">
+            <div className="flex items-center justify-between pb-4 border-b border-stone-100">
+              <div className="flex items-center gap-2.5">
+                <div className="w-10 h-10 rounded-2xl bg-amber-500 text-stone-950 flex items-center justify-center font-bold">
+                  <Sparkles className="w-5 h-5" />
+                </div>
+                <div>
+                  <h3 className="text-base font-black text-stone-900">
+                    Lançar Sobras ({orderForLeftovers.orderNumber})
+                  </h3>
+                  <p className="text-xs text-stone-500">
+                    Revendedor: <strong className="text-stone-800">{orderForLeftovers.resellerName}</strong>
+                  </p>
+                </div>
+              </div>
+              <button
+                type="button"
+                onClick={() => setOrderForLeftovers(null)}
+                className="p-1 rounded-full text-stone-400 hover:text-stone-700"
+              >
+                <X className="w-5 h-5" />
+              </button>
+            </div>
+
+            {adminLeftoverError && (
+              <div className="mt-4 p-3 rounded-xl bg-rose-50 border border-rose-200 text-xs text-rose-800 font-semibold flex items-start gap-2">
+                <AlertCircle className="w-4 h-4 shrink-0 text-rose-600 mt-0.5" />
+                <span>{adminLeftoverError}</span>
+              </div>
+            )}
+
+            {adminLeftoverSuccess && (
+              <div className="mt-4 p-3 rounded-xl bg-emerald-50 border border-emerald-200 text-xs text-emerald-800 font-bold flex items-start gap-2">
+                <CheckCircle className="w-4 h-4 shrink-0 text-emerald-600 mt-0.5" />
+                <span>{adminLeftoverSuccess}</span>
+              </div>
+            )}
+
+            <form onSubmit={handleSaveAdminLeftovers} className="space-y-4 mt-4 text-xs">
+              <div className="p-3.5 bg-stone-50 rounded-2xl border border-stone-200 space-y-1">
+                <span className="font-bold text-stone-500 uppercase text-[10px] block">
+                  Quantidades Retiradas pelo Revendedor:
+                </span>
+                <p className="font-black text-stone-900 text-xs">
+                  {orderForLeftovers.qtySaltyPickup} pães salgados / {orderForLeftovers.qtySweetPickup} pães doces
+                </p>
+                <p className="text-[11px] text-stone-500">
+                  Data de Entrega: {formatDate(orderForLeftovers.deliveryDate)}
+                </p>
+              </div>
+
+              {/* Salty Leftover */}
+              <div className="bg-white p-3.5 rounded-2xl border border-stone-200 space-y-2">
+                <div className="flex justify-between items-center">
+                  <label className="font-bold text-stone-800">
+                    Sobras de Pão Salgado (unidades)
+                  </label>
+                  <span className="text-[11px] text-stone-500">
+                    Máx: {orderForLeftovers.qtySaltyPickup}
+                  </span>
+                </div>
+                <input
+                  type="number"
+                  min="0"
+                  max={orderForLeftovers.qtySaltyPickup}
+                  value={adminSaltyLeftover}
+                  onChange={(e) => setAdminSaltyLeftover(Math.max(0, parseInt(e.target.value) || 0))}
+                  className="w-full px-3.5 py-2.5 bg-stone-50 border border-stone-300 rounded-xl font-black text-sm text-stone-900"
+                />
+                <div className="flex gap-1.5">
+                  <button
+                    type="button"
+                    onClick={() => setAdminSaltyLeftover(0)}
+                    className="flex-1 py-1 bg-stone-100 hover:bg-stone-200 text-stone-700 font-bold rounded-lg text-[10px]"
+                  >
+                    Vendeu Tudo (0 sobra)
+                  </button>
+                  {[5, 10, 20].map((v) => (
+                    <button
+                      key={v}
+                      type="button"
+                      onClick={() =>
+                        setAdminSaltyLeftover(Math.min(orderForLeftovers.qtySaltyPickup, v))
+                      }
+                      className="px-2 py-1 bg-stone-100 hover:bg-stone-200 text-stone-700 font-bold rounded-lg text-[10px]"
+                    >
+                      {v} un
+                    </button>
+                  ))}
+                </div>
+              </div>
+
+              {/* Sweet Leftover */}
+              <div className="bg-white p-3.5 rounded-2xl border border-stone-200 space-y-2">
+                <div className="flex justify-between items-center">
+                  <label className="font-bold text-stone-800">
+                    Sobras de Pão Doce (unidades)
+                  </label>
+                  <span className="text-[11px] text-stone-500">
+                    Máx: {orderForLeftovers.qtySweetPickup}
+                  </span>
+                </div>
+                <input
+                  type="number"
+                  min="0"
+                  max={orderForLeftovers.qtySweetPickup}
+                  value={adminSweetLeftover}
+                  onChange={(e) => setAdminSweetLeftover(Math.max(0, parseInt(e.target.value) || 0))}
+                  className="w-full px-3.5 py-2.5 bg-stone-50 border border-stone-300 rounded-xl font-black text-sm text-stone-900"
+                />
+                <div className="flex gap-1.5">
+                  <button
+                    type="button"
+                    onClick={() => setAdminSweetLeftover(0)}
+                    className="flex-1 py-1 bg-stone-100 hover:bg-stone-200 text-stone-700 font-bold rounded-lg text-[10px]"
+                  >
+                    Vendeu Tudo (0 sobra)
+                  </button>
+                  {[5, 10].map((v) => (
+                    <button
+                      key={v}
+                      type="button"
+                      onClick={() =>
+                        setAdminSweetLeftover(Math.min(orderForLeftovers.qtySweetPickup, v))
+                      }
+                      className="px-2 py-1 bg-stone-100 hover:bg-stone-200 text-stone-700 font-bold rounded-lg text-[10px]"
+                    >
+                      {v} un
+                    </button>
+                  ))}
+                </div>
+              </div>
+
+              {/* Live calculation */}
+              {(() => {
+                const sSold = Math.max(0, orderForLeftovers.qtySaltyPickup - adminSaltyLeftover);
+                const wSold = Math.max(0, orderForLeftovers.qtySweetPickup - adminSweetLeftover);
+                const finalTot =
+                  sSold * (orderForLeftovers.unitPriceSalty || DEFAULT_PRICES.priceSalty) +
+                  wSold * (orderForLeftovers.unitPriceSweet || DEFAULT_PRICES.priceSweet);
+                const bal = Math.max(0, finalTot - (orderForLeftovers.amountPaid || 0));
+
+                return (
+                  <div className="p-3.5 bg-amber-50 rounded-2xl border border-amber-300 space-y-1.5">
+                    <span className="font-extrabold text-[10px] uppercase text-amber-900 block">
+                      Cálculo Automático de Venda Efetiva
+                    </span>
+                    <div className="flex justify-between font-bold text-stone-800">
+                      <span>Pão Salgado Vendido:</span>
+                      <span>{sSold} un</span>
+                    </div>
+                    <div className="flex justify-between font-bold text-stone-800">
+                      <span>Pão Doce Vendido:</span>
+                      <span>{wSold} un</span>
+                    </div>
+                    <div className="pt-2 border-t border-amber-200 flex justify-between font-black text-stone-900 text-xs">
+                      <span>Novo Valor Final da Conta:</span>
+                      <span className="text-sm font-black text-amber-950">{formatCurrency(finalTot)}</span>
+                    </div>
+                    <div className="flex justify-between font-black text-rose-700 text-xs">
+                      <span>Saldo Final a Pagar:</span>
+                      <span>{formatCurrency(bal)}</span>
+                    </div>
+                  </div>
+                );
+              })()}
+
+              <div className="pt-2 flex items-center justify-end gap-2.5 border-t border-stone-100">
+                <button
+                  type="button"
+                  disabled={isSavingAdminLeftovers}
+                  onClick={() => setOrderForLeftovers(null)}
+                  className="px-4 py-2.5 font-bold text-stone-600 hover:text-stone-900 rounded-xl"
+                >
+                  Cancelar
+                </button>
+                <button
+                  type="submit"
+                  disabled={isSavingAdminLeftovers}
+                  className="px-5 py-2.5 bg-red-800 hover:bg-red-900 text-white font-black text-xs uppercase rounded-xl shadow-md transition disabled:opacity-50 flex items-center gap-1.5"
+                >
+                  <Sparkles className="w-3.5 h-3.5 text-amber-300" />
+                  <span>{isSavingAdminLeftovers ? 'Gravando...' : 'Confirmar e Gravar Sobras'}</span>
+                </button>
+              </div>
+            </form>
+          </div>
+        </div>
+      )}
     </div>
   );
 };

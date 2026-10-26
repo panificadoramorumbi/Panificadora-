@@ -2,6 +2,7 @@ import {
   collection,
   doc,
   getDoc,
+  getDocs,
   setDoc,
   addDoc,
   updateDoc,
@@ -334,8 +335,17 @@ export async function createOrder(params: {
     unitPriceSweet: currentPrices.priceSweet,
   });
 
-  const randomSuffix = Math.floor(1000 + Math.random() * 9000);
-  const orderNumber = `PM-${new Date().getFullYear().toString().slice(-2)}${randomSuffix}`;
+  // Sequential order numbering per client: Pedido #01, #02, #03...
+  let orderNumber = 'Pedido #01';
+  try {
+    const qResellerOrders = query(collection(db, 'orders'), where('resellerId', '==', resellerId));
+    const snap = await getDocs(qResellerOrders);
+    const nextNumber = snap.size + 1;
+    orderNumber = `Pedido #${String(nextNumber).padStart(2, '0')}`;
+  } catch (err) {
+    const randomSuffix = Math.floor(1000 + Math.random() * 9000);
+    orderNumber = `Pedido #${randomSuffix}`;
+  }
 
   const orderData = {
     orderNumber,
@@ -725,8 +735,18 @@ export async function createRetailOrder(params: {
   const unitPriceSweet = currentPrices.retailPriceSweet || 1.5;
 
   const total = Number((qtySalty * unitPriceSalty + qtySweet * unitPriceSweet).toFixed(2));
-  const randomSuffix = Math.floor(1000 + Math.random() * 9000);
-  const orderNumber = `ENC-${new Date().getFullYear().toString().slice(-2)}${randomSuffix}`;
+
+  // Sequential order numbering for retail: Encomenda #01, #02...
+  let orderNumber = 'Encomenda #01';
+  try {
+    const qVarejo = query(collection(db, 'orders'), where('orderType', '==', 'varejo'));
+    const snap = await getDocs(qVarejo);
+    const nextNum = snap.size + 1;
+    orderNumber = `Encomenda #${String(nextNum).padStart(2, '0')}`;
+  } catch (err) {
+    const randomSuffix = Math.floor(1000 + Math.random() * 9000);
+    orderNumber = `ENC-${new Date().getFullYear().toString().slice(-2)}${randomSuffix}`;
+  }
 
   const orderData = {
     orderNumber,
@@ -793,12 +813,102 @@ export async function updateUserProfile(
 
 /**
  * Admin Permanently Delete Reseller Profile
+ * Cascade deletes the client and all associated orders, payments, and notifications
+ * so no historical balances or amounts linger in the system.
  */
 export async function deleteUserProfile(uid: string) {
   try {
+    // 1. Delete user profile doc
     const docRef = doc(db, 'users', uid);
     await deleteDoc(docRef);
+
+    // 2. Cascade delete all orders for this reseller
+    const ordersSnap = await getDocs(query(collection(db, 'orders'), where('resellerId', '==', uid)));
+    for (const d of ordersSnap.docs) {
+      await deleteDoc(doc(db, 'orders', d.id));
+    }
+
+    // 3. Cascade delete all payments for this reseller
+    const paymentsSnap = await getDocs(query(collection(db, 'payments'), where('resellerId', '==', uid)));
+    for (const d of paymentsSnap.docs) {
+      await deleteDoc(doc(db, 'payments', d.id));
+    }
+
+    // 4. Cascade delete notifications for this reseller
+    const notifsSnap = await getDocs(query(collection(db, 'notifications'), where('targetUserId', '==', uid)));
+    for (const d of notifsSnap.docs) {
+      await deleteDoc(doc(db, 'notifications', d.id));
+    }
   } catch (error) {
     handleFirestoreError(error, OperationType.DELETE, `users/${uid}`);
+  }
+}
+
+/**
+ * Clean up orphaned orders and payments from clients that were already deleted
+ */
+export async function cleanupOrphanedHistory(): Promise<{ deletedOrders: number; deletedPayments: number }> {
+  try {
+    const usersSnap = await getDocs(collection(db, 'users'));
+    const activeUids = new Set(usersSnap.docs.map((d) => d.id));
+
+    let deletedOrders = 0;
+    let deletedPayments = 0;
+
+    const ordersSnap = await getDocs(collection(db, 'orders'));
+    for (const d of ordersSnap.docs) {
+      const data = d.data();
+      // If reseller is not 'varejo' and does not belong to an active user, delete it
+      if (data.resellerId !== 'varejo' && !activeUids.has(data.resellerId)) {
+        await deleteDoc(doc(db, 'orders', d.id));
+        deletedOrders++;
+      }
+    }
+
+    const paymentsSnap = await getDocs(collection(db, 'payments'));
+    for (const d of paymentsSnap.docs) {
+      const data = d.data();
+      if (!activeUids.has(data.resellerId)) {
+        await deleteDoc(doc(db, 'payments', d.id));
+        deletedPayments++;
+      }
+    }
+
+    return { deletedOrders, deletedPayments };
+  } catch (error) {
+    handleFirestoreError(error, OperationType.DELETE, 'cleanup');
+    return { deletedOrders: 0, deletedPayments: 0 };
+  }
+}
+
+/**
+ * Reset all historical test orders, payments and logs (clean slate for new operations)
+ */
+export async function resetAllHistoricalData(): Promise<{ deletedOrders: number; deletedPayments: number }> {
+  try {
+    let deletedOrders = 0;
+    let deletedPayments = 0;
+
+    const ordersSnap = await getDocs(collection(db, 'orders'));
+    for (const d of ordersSnap.docs) {
+      await deleteDoc(doc(db, 'orders', d.id));
+      deletedOrders++;
+    }
+
+    const paymentsSnap = await getDocs(collection(db, 'payments'));
+    for (const d of paymentsSnap.docs) {
+      await deleteDoc(doc(db, 'payments', d.id));
+      deletedPayments++;
+    }
+
+    const auditSnap = await getDocs(collection(db, 'audit_logs'));
+    for (const d of auditSnap.docs) {
+      await deleteDoc(doc(db, 'audit_logs', d.id));
+    }
+
+    return { deletedOrders, deletedPayments };
+  } catch (error) {
+    handleFirestoreError(error, OperationType.DELETE, 'reset');
+    return { deletedOrders: 0, deletedPayments: 0 };
   }
 }

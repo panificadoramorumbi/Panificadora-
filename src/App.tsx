@@ -35,7 +35,7 @@ const MainApp: React.FC = () => {
   // Navigation state
   const [sidebarOpen, setSidebarOpen] = useState(false);
   const [adminView, setAdminView] = useState<string>('dashboard');
-  const [resellerTab, setResellerTab] = useState<'orders' | 'leftovers' | 'financial' | 'notifications'>('orders');
+  const [resellerTab, setResellerTab] = useState<'orders' | 'leftovers' | 'financial' | 'profit' | 'notifications'>('orders');
 
   // Client selection for "Meus Clientes" submenu
   const [selectedClientId, setSelectedClientId] = useState<string | null>(null);

@@ -18,6 +18,7 @@ import {
   Sparkles,
   Tag,
   DollarSign,
+  TrendingUp,
 } from 'lucide-react';
 import { useAuth } from '../context/AuthContext';
 import { UserProfile } from '../types';
@@ -33,7 +34,7 @@ export type AdminView =
   | 'notifications'
   | 'settings';
 
-export type ResellerView = 'orders' | 'leftovers' | 'financial' | 'notifications';
+export type ResellerView = 'orders' | 'leftovers' | 'financial' | 'profit' | 'notifications';
 
 interface SidebarProps {
   isOpen: boolean;
@@ -350,6 +351,23 @@ export const Sidebar: React.FC<SidebarProps> = ({
               >
                 <Wallet className="w-5 h-5 shrink-0" />
                 <span>Meu Financeiro & Acertos</span>
+              </button>
+
+              <button
+                onClick={() => handleNavClick('profit')}
+                className={`w-full flex items-center justify-between px-3 py-3 rounded-xl font-bold transition text-left ${
+                  activeView === 'profit'
+                    ? 'bg-amber-500 text-stone-950 shadow-md'
+                    : 'text-stone-200 hover:bg-red-900 hover:text-white'
+                }`}
+              >
+                <div className="flex items-center gap-3">
+                  <TrendingUp className="w-5 h-5 shrink-0 text-emerald-400" />
+                  <span>Meu Lucro de Revenda</span>
+                </div>
+                <span className="text-[10px] font-black uppercase px-2 py-0.5 rounded-full bg-emerald-400 text-emerald-950">
+                  Lucro
+                </span>
               </button>
 
               <button

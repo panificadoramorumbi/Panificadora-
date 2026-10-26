@@ -29,8 +29,24 @@ import {
   PlusCircle,
 } from 'lucide-react';
 import { UserProfile, Order, PaymentRecord, NotificationPreference, ProductPrices } from '../../types';
-import { formatCurrency, formatDate, formatDateTime, formatPhone, buildWhatsAppLink } from '../../utils/formatters';
-import { updateUserProfile, deleteUserProfile, createOrder, sendNotification, DEFAULT_PRICES } from '../../services/dataService';
+import {
+  formatCurrency,
+  formatDate,
+  formatDateTime,
+  formatPhone,
+  buildWhatsAppLink,
+  calculateOrderMetrics,
+} from '../../utils/formatters';
+import {
+  updateUserProfile,
+  deleteUserProfile,
+  createOrder,
+  recordLeftovers,
+  sendNotification,
+  cleanupOrphanedHistory,
+  resetAllHistoricalData,
+  DEFAULT_PRICES,
+} from '../../services/dataService';
 import { useAuth } from '../../context/AuthContext';
 import { getPublicAppUrl } from '../../config/appConfig';
 
@@ -55,11 +71,36 @@ export const ClientsView: React.FC<ClientsViewProps> = ({
   openNewModalInitially = false,
   onCloseNewModal,
 }) => {
-  const { registerNewReseller } = useAuth();
+  const { currentUser, registerNewReseller } = useAuth();
   const [searchTerm, setSearchTerm] = useState('');
   const [showNewModal, setShowNewModal] = useState(openNewModalInitially);
   const [showEditModal, setShowEditModal] = useState(false);
   const [editingClient, setEditingClient] = useState<UserProfile | null>(null);
+
+  // Admin record leftovers state (Patrão lança sobras pelo cliente)
+  const [orderForLeftovers, setOrderForLeftovers] = useState<Order | null>(null);
+  const [adminSaltyLeftover, setAdminSaltyLeftover] = useState<number>(0);
+  const [adminSweetLeftover, setAdminSweetLeftover] = useState<number>(0);
+  const [isSavingAdminLeftovers, setIsSavingAdminLeftovers] = useState(false);
+  const [adminLeftoverError, setAdminLeftoverError] = useState<string | null>(null);
+  const [adminLeftoverSuccess, setAdminLeftoverSuccess] = useState<string | null>(null);
+
+  // Edit client modal form state
+  const [editName, setEditName] = useState('');
+  const [editUsername, setEditUsername] = useState('');
+  const [editPhone, setEditPhone] = useState('');
+  const [editEmail, setEditEmail] = useState('');
+  const [editPasswordHint, setEditPasswordHint] = useState('');
+  const [editClientType, setEditClientType] = useState<'revendedor' | 'consumidor_final'>('revendedor');
+  const [editNotificationPref, setEditNotificationPref] = useState<NotificationPreference>('both');
+  const [isSavingEdit, setIsSavingEdit] = useState(false);
+  const [editModalSuccess, setEditModalSuccess] = useState<string | null>(null);
+  const [editModalError, setEditModalError] = useState<string | null>(null);
+
+  // Cleanup test data modal state
+  const [showCleanupModal, setShowCleanupModal] = useState(false);
+  const [isCleaningUp, setIsCleaningUp] = useState(false);
+  const [cleanupMessage, setCleanupMessage] = useState<string | null>(null);
 
   // Sync openNewModalInitially when prop changes
   useEffect(() => {
@@ -408,6 +449,144 @@ Para acessar:
     }
   };
 
+  // Open record leftovers modal directly for an order
+  const handleOpenRecordLeftovers = (order: Order) => {
+    setOrderForLeftovers(order);
+    setAdminSaltyLeftover(0);
+    setAdminSweetLeftover(0);
+    setAdminLeftoverError(null);
+    setAdminLeftoverSuccess(null);
+  };
+
+  // Submit recorded leftovers on behalf of the reseller
+  const handleSaveAdminLeftovers = async (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!orderForLeftovers || !currentUser) return;
+    setAdminLeftoverError(null);
+
+    const sLeft = Number(adminSaltyLeftover) || 0;
+    const wLeft = Number(adminSweetLeftover) || 0;
+
+    if (sLeft < 0 || wLeft < 0) {
+      setAdminLeftoverError('A quantidade de sobras não pode ser negativa.');
+      return;
+    }
+    if (sLeft > orderForLeftovers.qtySaltyPickup) {
+      setAdminLeftoverError(
+        `A sobra de pão salgado (${sLeft}) não pode ser maior que a retirada (${orderForLeftovers.qtySaltyPickup}).`
+      );
+      return;
+    }
+    if (wLeft > orderForLeftovers.qtySweetPickup) {
+      setAdminLeftoverError(
+        `A sobra de pão doce (${wLeft}) não pode ser maior que a retirada (${orderForLeftovers.qtySweetPickup}).`
+      );
+      return;
+    }
+
+    setIsSavingAdminLeftovers(true);
+    try {
+      await recordLeftovers({
+        order: orderForLeftovers,
+        qtySaltyLeftover: sLeft,
+        qtySweetLeftover: wLeft,
+        recordedByUid: currentUser.uid,
+        recordedByName: 'Administrador (Padaria)',
+      });
+
+      setAdminLeftoverSuccess(
+        `Sobras registradas com sucesso para ${orderForLeftovers.resellerName}! O valor final e as quantidades vendidas foram recalculados.`
+      );
+
+      setTimeout(() => {
+        setOrderForLeftovers(null);
+        setAdminLeftoverSuccess(null);
+      }, 1500);
+    } catch (err: any) {
+      console.error(err);
+      setAdminLeftoverError('Erro ao gravar sobras: ' + (err?.message || err));
+    } finally {
+      setIsSavingAdminLeftovers(false);
+    }
+  };
+
+  // Open edit modal prefilled with current client data
+  const handleOpenEditModal = (client: UserProfile) => {
+    setEditingClient(client);
+    setEditName(client.displayName || '');
+    setEditUsername(client.username || (client.email ? client.email.split('@')[0] : ''));
+    setEditPhone(client.phone || '');
+    setEditEmail(client.email || '');
+    setEditPasswordHint(client.simplePasswordHint || '123456');
+    setEditClientType(client.clientType || 'revendedor');
+    setEditNotificationPref(client.notificationPreference || 'both');
+    setEditModalError(null);
+    setEditModalSuccess(null);
+    setShowEditModal(true);
+  };
+
+  // Save changes to client profile (updates name, username, phone, email, password, etc.)
+  const handleSaveEditedClient = async (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!editingClient) return;
+
+    if (!editName.trim()) {
+      setEditModalError('Informe o nome do revendedor.');
+      return;
+    }
+    if (!editUsername.trim()) {
+      setEditModalError('Informe o nome de usuário para login.');
+      return;
+    }
+
+    setIsSavingEdit(true);
+    setEditModalError(null);
+    try {
+      await updateUserProfile(editingClient.uid, {
+        displayName: editName.trim(),
+        username: editUsername.trim().toLowerCase().replace(/[^a-z0-9._-]/g, ''),
+        phone: editPhone.trim(),
+        email: editEmail.trim(),
+        simplePasswordHint: editPasswordHint.trim() || '123456',
+        clientType: editClientType,
+        notificationPreference: editNotificationPref,
+      });
+
+      setEditModalSuccess('Dados do cliente atualizados com sucesso!');
+      setTimeout(() => {
+        setShowEditModal(false);
+        setEditingClient(null);
+        setEditModalSuccess(null);
+      }, 1400);
+    } catch (err: any) {
+      setEditModalError('Erro ao atualizar dados: ' + (err?.message || err));
+    } finally {
+      setIsSavingEdit(false);
+    }
+  };
+
+  // Run cleanup of orphaned records or reset all test data
+  const handleRunCleanup = async (type: 'orphans' | 'all') => {
+    setIsCleaningUp(true);
+    try {
+      if (type === 'orphans') {
+        const res = await cleanupOrphanedHistory();
+        setCleanupMessage(
+          `Limpeza concluída! Foram removidos ${res.deletedOrders} pedido(s) e ${res.deletedPayments} pagamento(s) de clientes que já tinham sido excluídos.`
+        );
+      } else {
+        const res = await resetAllHistoricalData();
+        setCleanupMessage(
+          `Histórico zerado com sucesso! Foram excluídos ${res.deletedOrders} pedidos e ${res.deletedPayments} pagamentos de teste. O saldo está 100% limpo para os clientes reais!`
+        );
+      }
+    } catch (err: any) {
+      alert('Erro ao realizar limpeza: ' + (err?.message || err));
+    } finally {
+      setIsCleaningUp(false);
+    }
+  };
+
   const handleCloseNewModal = () => {
     setShowNewModal(false);
     onCloseNewModal?.();
@@ -429,7 +608,21 @@ Para acessar:
           </p>
         </div>
 
-        <div className="flex items-center gap-3">
+        <div className="flex flex-wrap items-center gap-2.5">
+          {/* Cleanup Test Data Button */}
+          <button
+            type="button"
+            onClick={() => {
+              setCleanupMessage(null);
+              setShowCleanupModal(true);
+            }}
+            className="bg-stone-100 hover:bg-stone-200 text-stone-700 font-bold text-xs uppercase px-3.5 py-3 rounded-xl border border-stone-300 transition flex items-center gap-2 shrink-0"
+            title="Limpar pedidos e pagamentos de clientes excluídos ou zerar histórico de teste"
+          >
+            <Trash2 className="w-4 h-4 text-stone-500" />
+            <span>Limpar Histórico de Teste</span>
+          </button>
+
           <button
             onClick={() => {
               setFormError(null);
@@ -734,6 +927,17 @@ Para acessar:
                       </button>
                     )}
 
+                    {/* Edit Client Data Button */}
+                    <button
+                      type="button"
+                      onClick={() => handleOpenEditModal(selectedClient)}
+                      className="px-3 py-2 bg-stone-100 hover:bg-stone-200 text-stone-800 rounded-xl shadow-xs transition flex items-center gap-1.5 text-xs font-bold border border-stone-300"
+                      title="Alterar dados do revendedor (nome, celular, usuário, senha, e-mail)"
+                    >
+                      <Edit2 className="w-3.5 h-3.5 text-stone-700" />
+                      <span>Editar Dados</span>
+                    </button>
+
                     <button
                       onClick={() => handleToggleActive(selectedClient)}
                       className={`px-3 py-2 rounded-xl text-xs font-bold border transition ${
@@ -811,60 +1015,147 @@ Para acessar:
                     Nenhum pedido registrado para este revendedor ainda.
                   </div>
                 ) : (
-                  <div className="overflow-x-auto">
-                    <table className="w-full text-left text-xs">
-                      <thead>
-                        <tr className="border-b border-stone-100 text-stone-400 uppercase text-[10px] font-bold">
-                          <th className="pb-3">Identificador</th>
-                          <th className="pb-3">Data Entrega</th>
-                          <th className="pb-3 text-right">Retirada</th>
-                          <th className="pb-3 text-right">Sobras</th>
-                          <th className="pb-3 text-right">Valor Final</th>
-                          <th className="pb-3 text-right">Pago</th>
-                          <th className="pb-3 text-right">Saldo</th>
-                          <th className="pb-3 text-center">Situação</th>
-                        </tr>
-                      </thead>
-                      <tbody className="divide-y divide-stone-100">
-                        {clientOrders.map((o) => (
-                          <tr key={o.id} className="hover:bg-stone-50 transition">
-                            <td className="py-3 font-bold text-stone-900">{o.orderNumber}</td>
-                            <td className="py-3 text-stone-600">{formatDate(o.deliveryDate)}</td>
-                            <td className="py-3 text-right">
-                              {o.qtySaltyPickup} salg / {o.qtySweetPickup} doce
-                            </td>
-                            <td className="py-3 text-right">
-                              {o.leftoversRecorded ? (
-                                `${o.qtySaltyLeftover} salg / ${o.qtySweetLeftover} doce`
-                              ) : (
-                                <span className="text-amber-600 font-semibold italic">Pendente</span>
-                              )}
-                            </td>
-                            <td className="py-3 text-right font-bold text-stone-900">
-                              {formatCurrency(o.finalTotal)}
-                            </td>
-                            <td className="py-3 text-right font-medium text-emerald-700">
-                              {formatCurrency(o.amountPaid)}
-                            </td>
-                            <td className="py-3 text-right font-bold text-rose-700">
-                              {formatCurrency(o.balanceDue)}
-                            </td>
-                            <td className="py-3 text-center">
-                              <span
-                                className={`inline-block px-2 py-0.5 rounded-full text-[10px] font-bold ${
-                                  o.status === 'concluido'
-                                    ? 'bg-emerald-100 text-emerald-800'
-                                    : 'bg-amber-100 text-amber-800'
-                                }`}
-                              >
-                                {o.status === 'concluido' ? 'Concluído' : 'Aguardando Sobras'}
+                  <>
+                    {/* Mobile View: Stacked Cards (Sem arrastar para o lado no celular) */}
+                    <div className="block md:hidden space-y-3">
+                      {clientOrders.map((o) => (
+                        <div
+                          key={o.id}
+                          className="p-3.5 bg-stone-50 rounded-2xl border border-stone-200 space-y-2.5 text-xs shadow-2xs"
+                        >
+                          <div className="flex items-center justify-between pb-2 border-b border-stone-200">
+                            <span className="font-black text-stone-900 text-sm">{o.orderNumber}</span>
+                            <span
+                              className={`inline-block px-2 py-0.5 rounded-full text-[10px] font-bold ${
+                                o.status === 'concluido'
+                                  ? 'bg-emerald-100 text-emerald-800'
+                                  : 'bg-amber-100 text-amber-800'
+                              }`}
+                            >
+                              {o.status === 'concluido' ? 'Concluído' : 'Aguardando Sobras'}
+                            </span>
+                          </div>
+
+                          <div className="flex items-center justify-between text-stone-600">
+                            <span>Data de Entrega:</span>
+                            <span className="font-bold text-stone-900">{formatDate(o.deliveryDate)}</span>
+                          </div>
+
+                          <div className="grid grid-cols-2 gap-2 bg-white p-2.5 rounded-xl border border-stone-200">
+                            <div>
+                              <span className="text-[10px] uppercase font-bold text-stone-400 block">Retiradas</span>
+                              <span className="font-bold text-stone-800">
+                                {o.qtySaltyPickup} salg / {o.qtySweetPickup} doce
                               </span>
-                            </td>
+                            </div>
+                            <div>
+                              <span className="text-[10px] uppercase font-bold text-stone-400 block">Sobras</span>
+                              <span className="font-bold text-amber-700">
+                                {o.leftoversRecorded
+                                  ? `${o.qtySaltyLeftover} salg / ${o.qtySweetLeftover} doce`
+                                  : 'Pendente'}
+                              </span>
+                            </div>
+                          </div>
+
+                          <div className="flex items-center justify-between bg-amber-50/70 p-2.5 rounded-xl border border-amber-200">
+                            <div>
+                              <span className="text-[10px] uppercase font-bold text-amber-900 block">Valor Final</span>
+                              <span className="font-black text-stone-900 text-sm">{formatCurrency(o.finalTotal)}</span>
+                            </div>
+                            <div className="text-right">
+                              <span className="text-[10px] uppercase font-bold text-stone-500 block">Saldo a Pagar</span>
+                              <span className={`font-black text-sm ${o.balanceDue > 0 ? 'text-rose-700' : 'text-emerald-700'}`}>
+                                {formatCurrency(o.balanceDue)}
+                              </span>
+                            </div>
+                          </div>
+
+                          {!o.leftoversRecorded && (
+                            <button
+                              type="button"
+                              onClick={() => handleOpenRecordLeftovers(o)}
+                              className="w-full py-2 bg-amber-500 hover:bg-amber-600 text-stone-950 font-black rounded-xl text-xs flex items-center justify-center gap-1.5 shadow-sm transition active:scale-[0.98]"
+                            >
+                              <Sparkles className="w-3.5 h-3.5 text-stone-950" />
+                              <span>Lançar Sobras Deste Pedido</span>
+                            </button>
+                          )}
+                        </div>
+                      ))}
+                    </div>
+
+                    {/* Desktop View: Full Table */}
+                    <div className="hidden md:block overflow-x-auto">
+                      <table className="w-full text-left text-xs">
+                        <thead>
+                          <tr className="border-b border-stone-100 text-stone-400 uppercase text-[10px] font-bold">
+                            <th className="pb-3">Identificador</th>
+                            <th className="pb-3">Data Entrega</th>
+                            <th className="pb-3 text-right">Retirada</th>
+                            <th className="pb-3 text-right">Sobras</th>
+                            <th className="pb-3 text-right">Valor Final</th>
+                            <th className="pb-3 text-right">Pago</th>
+                            <th className="pb-3 text-right">Saldo</th>
+                            <th className="pb-3 text-center">Situação</th>
+                            <th className="pb-3 text-center">Ações</th>
                           </tr>
-                        ))}
-                      </tbody>
-                    </table>
-                  </div>
+                        </thead>
+                        <tbody className="divide-y divide-stone-100">
+                          {clientOrders.map((o) => (
+                            <tr key={o.id} className="hover:bg-stone-50 transition">
+                              <td className="py-3 font-bold text-stone-900">{o.orderNumber}</td>
+                              <td className="py-3 text-stone-600">{formatDate(o.deliveryDate)}</td>
+                              <td className="py-3 text-right">
+                                {o.qtySaltyPickup} salg / {o.qtySweetPickup} doce
+                              </td>
+                              <td className="py-3 text-right">
+                                {o.leftoversRecorded ? (
+                                  `${o.qtySaltyLeftover} salg / ${o.qtySweetLeftover} doce`
+                                ) : (
+                                  <span className="text-amber-600 font-semibold italic">Pendente</span>
+                                )}
+                              </td>
+                              <td className="py-3 text-right font-bold text-stone-900">
+                                {formatCurrency(o.finalTotal)}
+                              </td>
+                              <td className="py-3 text-right font-medium text-emerald-700">
+                                {formatCurrency(o.amountPaid)}
+                              </td>
+                              <td className="py-3 text-right font-bold text-rose-700">
+                                {formatCurrency(o.balanceDue)}
+                              </td>
+                              <td className="py-3 text-center">
+                                <span
+                                  className={`inline-block px-2 py-0.5 rounded-full text-[10px] font-bold ${
+                                    o.status === 'concluido'
+                                      ? 'bg-emerald-100 text-emerald-800'
+                                      : 'bg-amber-100 text-amber-800'
+                                  }`}
+                                >
+                                  {o.status === 'concluido' ? 'Concluído' : 'Aguardando Sobras'}
+                                </span>
+                              </td>
+                              <td className="py-3 text-center">
+                                {!o.leftoversRecorded ? (
+                                  <button
+                                    type="button"
+                                    onClick={() => handleOpenRecordLeftovers(o)}
+                                    className="px-2.5 py-1 bg-amber-500 hover:bg-amber-600 text-stone-950 font-black rounded-lg text-[10px] inline-flex items-center gap-1 shadow-2xs transition active:scale-95"
+                                  >
+                                    <Sparkles className="w-3 h-3 text-stone-950" />
+                                    <span>Lançar Sobras</span>
+                                  </button>
+                                ) : (
+                                  <span className="text-[10px] text-stone-400 font-medium">Registrado</span>
+                                )}
+                              </td>
+                            </tr>
+                          ))}
+                        </tbody>
+                      </table>
+                    </div>
+                  </>
                 )}
               </div>
 
@@ -1653,6 +1944,517 @@ Para acessar:
           </div>
         </div>
       )}
+
+      {/* MODAL: EDITAR DADOS DO REVENDEDOR (ADMIN) */}
+      {showEditModal && editingClient && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 backdrop-blur-xs p-4 overflow-y-auto">
+          <div className="w-full max-w-md bg-white rounded-3xl p-6 sm:p-7 shadow-2xl border border-stone-200 my-8">
+            <div className="flex items-center justify-between pb-4 border-b border-stone-100">
+              <div className="flex items-center gap-2.5">
+                <div className="w-9 h-9 rounded-xl bg-stone-900 text-white flex items-center justify-center font-bold">
+                  <Edit2 className="w-5 h-5 text-amber-400" />
+                </div>
+                <div>
+                  <h3 className="text-base font-black text-stone-900">Editar Dados do Cliente</h3>
+                  <p className="text-xs text-stone-500">{editingClient.displayName}</p>
+                </div>
+              </div>
+              <button
+                type="button"
+                onClick={() => {
+                  setShowEditModal(false);
+                  setEditingClient(null);
+                }}
+                className="p-1 rounded-full text-stone-400 hover:text-stone-700"
+              >
+                <X className="w-5 h-5" />
+              </button>
+            </div>
+
+            {editModalError && (
+              <div className="mt-4 p-3 rounded-xl bg-rose-50 border border-rose-200 text-xs text-rose-800 font-semibold flex items-start gap-2">
+                <AlertCircle className="w-4 h-4 shrink-0 text-rose-600 mt-0.5" />
+                <span>{editModalError}</span>
+              </div>
+            )}
+
+            {editModalSuccess && (
+              <div className="mt-4 p-3 rounded-xl bg-emerald-50 border border-emerald-200 text-xs text-emerald-800 font-semibold flex items-start gap-2">
+                <CheckCircle className="w-4 h-4 shrink-0 text-emerald-600 mt-0.5" />
+                <span>{editModalSuccess}</span>
+              </div>
+            )}
+
+            <form onSubmit={handleSaveEditedClient} className="space-y-3.5 mt-4">
+              <div>
+                <label className="block text-xs font-bold text-stone-700 uppercase mb-1">
+                  Nome Completo *
+                </label>
+                <input
+                  type="text"
+                  required
+                  value={editName}
+                  onChange={(e) => setEditName(e.target.value)}
+                  className="w-full px-3.5 py-2.5 bg-stone-50 border border-stone-300 rounded-xl text-xs font-bold text-stone-900 focus:outline-hidden focus:ring-2 focus:ring-red-800 focus:bg-white"
+                />
+              </div>
+
+              <div>
+                <label className="block text-xs font-bold text-stone-700 uppercase mb-1">
+                  Nome de Usuário (Login) *
+                </label>
+                <div className="relative">
+                  <div className="absolute inset-y-0 left-0 pl-3 flex items-center pointer-events-none text-stone-400">
+                    <User className="w-4 h-4" />
+                  </div>
+                  <input
+                    type="text"
+                    required
+                    value={editUsername}
+                    onChange={(e) =>
+                      setEditUsername(e.target.value.toLowerCase().replace(/[^a-z0-9._-]/g, ''))
+                    }
+                    className="w-full pl-9 pr-3.5 py-2.5 bg-stone-50 border border-stone-300 rounded-xl text-xs font-bold text-stone-900 focus:outline-hidden focus:ring-2 focus:ring-red-800 focus:bg-white font-mono"
+                  />
+                </div>
+              </div>
+
+              <div>
+                <label className="block text-xs font-bold text-stone-700 uppercase mb-1">
+                  Telefone / WhatsApp *
+                </label>
+                <div className="relative">
+                  <div className="absolute inset-y-0 left-0 pl-3 flex items-center pointer-events-none text-stone-400">
+                    <Phone className="w-4 h-4" />
+                  </div>
+                  <input
+                    type="tel"
+                    required
+                    value={editPhone}
+                    onChange={(e) => setEditPhone(e.target.value)}
+                    className="w-full pl-9 pr-3.5 py-2.5 bg-stone-50 border border-stone-300 rounded-xl text-xs font-medium text-stone-900 focus:outline-hidden focus:ring-2 focus:ring-red-800 focus:bg-white"
+                  />
+                </div>
+              </div>
+
+              <div>
+                <label className="block text-xs font-bold text-stone-700 uppercase mb-1">
+                  Senha Simples de Acesso
+                </label>
+                <div className="relative">
+                  <div className="absolute inset-y-0 left-0 pl-3 flex items-center pointer-events-none text-stone-400">
+                    <KeyRound className="w-4 h-4" />
+                  </div>
+                  <input
+                    type="text"
+                    value={editPasswordHint}
+                    onChange={(e) => setEditPasswordHint(e.target.value)}
+                    className="w-full pl-9 pr-3.5 py-2.5 bg-stone-50 border border-stone-300 rounded-xl text-xs font-bold text-stone-900 focus:outline-hidden focus:ring-2 focus:ring-red-800 focus:bg-white font-mono"
+                  />
+                </div>
+              </div>
+
+              <div>
+                <label className="block text-xs font-bold text-stone-500 uppercase mb-1">
+                  E-mail (Opcional)
+                </label>
+                <input
+                  type="email"
+                  value={editEmail}
+                  onChange={(e) => setEditEmail(e.target.value)}
+                  className="w-full px-3.5 py-2 bg-stone-50 border border-stone-200 rounded-xl text-xs text-stone-600 focus:outline-hidden focus:ring-2 focus:ring-red-800 focus:bg-white"
+                />
+              </div>
+
+              <div>
+                <label className="block text-xs font-bold text-stone-700 uppercase mb-1">
+                  Tipo de Cliente
+                </label>
+                <div className="grid grid-cols-2 gap-2">
+                  <button
+                    type="button"
+                    onClick={() => setEditClientType('revendedor')}
+                    className={`py-2 px-3 rounded-xl border text-xs font-bold transition ${
+                      editClientType === 'revendedor'
+                        ? 'bg-red-800 text-white border-red-800 shadow-2xs'
+                        : 'bg-stone-50 text-stone-700 border-stone-200 hover:bg-stone-100'
+                    }`}
+                  >
+                    🥖 Revendedor (Atacado)
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => setEditClientType('consumidor_final')}
+                    className={`py-2 px-3 rounded-xl border text-xs font-bold transition ${
+                      editClientType === 'consumidor_final'
+                        ? 'bg-amber-500 text-stone-950 border-amber-500 shadow-2xs'
+                        : 'bg-stone-50 text-stone-700 border-stone-200 hover:bg-stone-100'
+                    }`}
+                  >
+                    🛒 Consumidor Final (Varejo)
+                  </button>
+                </div>
+              </div>
+
+              <div>
+                <label className="block text-xs font-bold text-stone-700 uppercase mb-1">
+                  Preferência de Notificação
+                </label>
+                <div className="grid grid-cols-2 gap-2">
+                  {(['both', 'in_app', 'whatsapp', 'none'] as NotificationPreference[]).map((pref) => {
+                    const isSel = editNotificationPref === pref;
+                    const labels: Record<NotificationPreference, string> = {
+                      both: '⚡ Ambos (App + Zap)',
+                      in_app: '📱 Apenas no App',
+                      whatsapp: '💬 Apenas no Zap',
+                      none: '🔕 Silencioso',
+                    };
+                    return (
+                      <button
+                        key={pref}
+                        type="button"
+                        onClick={() => setEditNotificationPref(pref)}
+                        className={`py-2 px-2.5 rounded-xl border text-[11px] font-bold text-center transition ${
+                          isSel
+                            ? 'bg-stone-900 text-amber-300 border-stone-900 shadow-2xs'
+                            : 'bg-stone-50 text-stone-600 border-stone-200 hover:bg-stone-100'
+                        }`}
+                      >
+                        {labels[pref]}
+                      </button>
+                    );
+                  })}
+                </div>
+              </div>
+
+              <div className="pt-3 flex items-center justify-end gap-2.5 border-t border-stone-100">
+                <button
+                  type="button"
+                  onClick={() => {
+                    setShowEditModal(false);
+                    setEditingClient(null);
+                  }}
+                  className="px-4 py-2 text-xs font-bold text-stone-600 hover:text-stone-900"
+                >
+                  Cancelar
+                </button>
+                <button
+                  type="submit"
+                  disabled={isSavingEdit}
+                  className="px-5 py-2.5 bg-red-800 hover:bg-red-900 text-white text-xs font-black uppercase rounded-xl shadow-md transition disabled:opacity-50"
+                >
+                  {isSavingEdit ? 'Salvando...' : 'Salvar Alterações'}
+                </button>
+              </div>
+            </form>
+          </div>
+        </div>
+      )}
+
+      {/* MODAL: LIMPAR HISTÓRICO DE TESTE E SALDOS RESIDUAIS */}
+      {showCleanupModal && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 backdrop-blur-xs p-4 overflow-y-auto">
+          <div className="w-full max-w-lg bg-white rounded-3xl p-6 sm:p-7 shadow-2xl border border-stone-200 my-8">
+            <div className="flex items-center justify-between pb-4 border-b border-stone-100">
+              <div className="flex items-center gap-2.5">
+                <div className="w-10 h-10 rounded-2xl bg-rose-100 text-rose-800 flex items-center justify-center font-bold">
+                  <Trash2 className="w-5 h-5" />
+                </div>
+                <div>
+                  <h3 className="text-base font-black text-stone-900">Limpeza do Histórico de Testes</h3>
+                  <p className="text-xs text-stone-500">Zerar saldos residuais e pedidos de teste</p>
+                </div>
+              </div>
+              <button
+                type="button"
+                onClick={() => {
+                  setShowCleanupModal(false);
+                  setCleanupMessage(null);
+                }}
+                className="p-1 rounded-full text-stone-400 hover:text-stone-700"
+              >
+                <X className="w-5 h-5" />
+              </button>
+            </div>
+
+            {cleanupMessage && (
+              <div className="mt-4 p-4 rounded-2xl bg-emerald-50 border border-emerald-200 text-xs text-emerald-900 font-bold flex items-start gap-2.5">
+                <CheckCircle className="w-4 h-4 text-emerald-600 shrink-0 mt-0.5" />
+                <span>{cleanupMessage}</span>
+              </div>
+            )}
+
+            <div className="mt-5 space-y-4 text-xs">
+              <p className="text-stone-600">
+                Como você excluiu clientes fictícios de teste, selecione a opção desejada para que os saldos e valores fiquem 100% corretos:
+              </p>
+
+              {/* Option 1: Clean only orphans */}
+              <div className="p-4 rounded-2xl border border-stone-200 bg-stone-50 space-y-2">
+                <div className="flex items-center justify-between">
+                  <h4 className="font-black text-stone-900 text-xs uppercase flex items-center gap-1.5">
+                    <span>1. Limpar Registros de Clientes Excluídos</span>
+                  </h4>
+                  <span className="text-[10px] font-bold text-amber-800 bg-amber-100 px-2 py-0.5 rounded-full">
+                    Mais Seguro
+                  </span>
+                </div>
+                <p className="text-stone-600 leading-relaxed text-[11px]">
+                  Apaga somente os pedidos e pagamentos que ficaram órfãos (de clientes fictícios que já foram deletados). Os clientes que continuam cadastrados não serão afetados.
+                </p>
+                <div className="pt-2">
+                  <button
+                    type="button"
+                    disabled={isCleaningUp}
+                    onClick={() => handleRunCleanup('orphans')}
+                    className="w-full py-2.5 bg-stone-800 hover:bg-stone-900 text-white font-bold text-xs rounded-xl shadow-xs transition flex items-center justify-center gap-2 disabled:opacity-50"
+                  >
+                    <Trash2 className="w-3.5 h-3.5 text-amber-300" />
+                    <span>{isCleaningUp ? 'Limpando...' : 'Remover Pedidos de Clientes Deletados'}</span>
+                  </button>
+                </div>
+              </div>
+
+              {/* Option 2: Full reset of test history */}
+              <div className="p-4 rounded-2xl border border-rose-200 bg-rose-50/50 space-y-2">
+                <div className="flex items-center justify-between">
+                  <h4 className="font-black text-rose-950 text-xs uppercase flex items-center gap-1.5">
+                    <span>2. Zerar Todo o Histórico de Testes</span>
+                  </h4>
+                  <span className="text-[10px] font-bold text-rose-800 bg-rose-100 px-2 py-0.5 rounded-full">
+                    Zerar Saldos para R$ 0,00
+                  </span>
+                </div>
+                <p className="text-stone-600 leading-relaxed text-[11px]">
+                  Apaga todos os pedidos e pagamentos de teste já registrados no sistema. Os cadastros dos seus revendedores reais continuarão salvos, e o próximo pedido começará como <strong>Pedido #01</strong> com saldo zero.
+                </p>
+                <div className="pt-2">
+                  <button
+                    type="button"
+                    disabled={isCleaningUp}
+                    onClick={() => {
+                      if (window.confirm('Atenção: Deseja realmente zerar todos os pedidos e pagamentos de teste? Os clientes cadastrados serão mantidos, mas todo o histórico financeiro voltará a zero para começar do Pedido #01.')) {
+                        handleRunCleanup('all');
+                      }
+                    }}
+                    className="w-full py-2.5 bg-rose-700 hover:bg-rose-800 text-white font-black text-xs uppercase rounded-xl shadow-md transition flex items-center justify-center gap-2 disabled:opacity-50"
+                  >
+                    <Trash2 className="w-3.5 h-3.5" />
+                    <span>{isCleaningUp ? 'Zerando histórico...' : 'Zerar Todos os Pedidos e Saldos de Teste'}</span>
+                  </button>
+                </div>
+              </div>
+
+              <div className="pt-2 flex justify-end">
+                <button
+                  type="button"
+                  onClick={() => {
+                    setShowCleanupModal(false);
+                    setCleanupMessage(null);
+                  }}
+                  className="px-4 py-2 text-xs font-bold text-stone-600 hover:text-stone-900"
+                >
+                  Fechar
+                </button>
+              </div>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* Modal: Administrador Lançar Sobras pelo Cliente */}
+      {orderForLeftovers && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 backdrop-blur-xs p-4 overflow-y-auto">
+          <div className="w-full max-w-lg bg-white rounded-3xl p-6 sm:p-7 shadow-2xl border border-stone-200 my-8">
+            <div className="flex items-center justify-between pb-4 border-b border-stone-100">
+              <div className="flex items-center gap-2.5">
+                <div className="w-10 h-10 rounded-2xl bg-amber-500 text-stone-950 flex items-center justify-center font-bold">
+                  <Sparkles className="w-5 h-5" />
+                </div>
+                <div>
+                  <h3 className="text-base font-black text-stone-900">
+                    Lançar Sobras ({orderForLeftovers.orderNumber})
+                  </h3>
+                  <p className="text-xs text-stone-500">
+                    Revendedor: <strong className="text-stone-800">{orderForLeftovers.resellerName}</strong>
+                  </p>
+                </div>
+              </div>
+              <button
+                type="button"
+                onClick={() => setOrderForLeftovers(null)}
+                className="p-1 rounded-full text-stone-400 hover:text-stone-700"
+              >
+                <X className="w-5 h-5" />
+              </button>
+            </div>
+
+            {adminLeftoverError && (
+              <div className="mt-4 p-3 rounded-xl bg-rose-50 border border-rose-200 text-xs text-rose-800 font-semibold flex items-start gap-2">
+                <AlertCircle className="w-4 h-4 shrink-0 text-rose-600 mt-0.5" />
+                <span>{adminLeftoverError}</span>
+              </div>
+            )}
+
+            {adminLeftoverSuccess && (
+              <div className="mt-4 p-3 rounded-xl bg-emerald-50 border border-emerald-200 text-xs text-emerald-800 font-bold flex items-start gap-2">
+                <CheckCircle className="w-4 h-4 shrink-0 text-emerald-600 mt-0.5" />
+                <span>{adminLeftoverSuccess}</span>
+              </div>
+            )}
+
+            <form onSubmit={handleSaveAdminLeftovers} className="space-y-4 mt-4 text-xs">
+              <div className="p-3.5 bg-stone-50 rounded-2xl border border-stone-200 space-y-1">
+                <span className="font-bold text-stone-500 uppercase text-[10px] block">
+                  Quantidades Retiradas pelo Revendedor:
+                </span>
+                <p className="font-black text-stone-900 text-xs">
+                  {orderForLeftovers.qtySaltyPickup} pães salgados / {orderForLeftovers.qtySweetPickup} pães doces
+                </p>
+                <p className="text-[11px] text-stone-500">
+                  Data de Entrega: {formatDate(orderForLeftovers.deliveryDate)}
+                </p>
+              </div>
+
+              {/* Salty Leftover */}
+              <div className="bg-white p-3.5 rounded-2xl border border-stone-200 space-y-2">
+                <div className="flex justify-between items-center">
+                  <label className="font-bold text-stone-800">
+                    Sobras de Pão Salgado (unidades)
+                  </label>
+                  <span className="text-[11px] text-stone-500">
+                    Máx: {orderForLeftovers.qtySaltyPickup}
+                  </span>
+                </div>
+                <input
+                  type="number"
+                  min="0"
+                  max={orderForLeftovers.qtySaltyPickup}
+                  value={adminSaltyLeftover}
+                  onChange={(e) => setAdminSaltyLeftover(Math.max(0, parseInt(e.target.value) || 0))}
+                  className="w-full px-3.5 py-2.5 bg-stone-50 border border-stone-300 rounded-xl font-black text-sm text-stone-900"
+                />
+                <div className="flex gap-1.5">
+                  <button
+                    type="button"
+                    onClick={() => setAdminSaltyLeftover(0)}
+                    className="flex-1 py-1 bg-stone-100 hover:bg-stone-200 text-stone-700 font-bold rounded-lg text-[10px]"
+                  >
+                    Vendeu Tudo (0 sobra)
+                  </button>
+                  {[5, 10, 20].map((v) => (
+                    <button
+                      key={v}
+                      type="button"
+                      onClick={() =>
+                        setAdminSaltyLeftover(Math.min(orderForLeftovers.qtySaltyPickup, v))
+                      }
+                      className="px-2 py-1 bg-stone-100 hover:bg-stone-200 text-stone-700 font-bold rounded-lg text-[10px]"
+                    >
+                      {v} un
+                    </button>
+                  ))}
+                </div>
+              </div>
+
+              {/* Sweet Leftover */}
+              <div className="bg-white p-3.5 rounded-2xl border border-stone-200 space-y-2">
+                <div className="flex justify-between items-center">
+                  <label className="font-bold text-stone-800">
+                    Sobras de Pão Doce (unidades)
+                  </label>
+                  <span className="text-[11px] text-stone-500">
+                    Máx: {orderForLeftovers.qtySweetPickup}
+                  </span>
+                </div>
+                <input
+                  type="number"
+                  min="0"
+                  max={orderForLeftovers.qtySweetPickup}
+                  value={adminSweetLeftover}
+                  onChange={(e) => setAdminSweetLeftover(Math.max(0, parseInt(e.target.value) || 0))}
+                  className="w-full px-3.5 py-2.5 bg-stone-50 border border-stone-300 rounded-xl font-black text-sm text-stone-900"
+                />
+                <div className="flex gap-1.5">
+                  <button
+                    type="button"
+                    onClick={() => setAdminSweetLeftover(0)}
+                    className="flex-1 py-1 bg-stone-100 hover:bg-stone-200 text-stone-700 font-bold rounded-lg text-[10px]"
+                  >
+                    Vendeu Tudo (0 sobra)
+                  </button>
+                  {[5, 10].map((v) => (
+                    <button
+                      key={v}
+                      type="button"
+                      onClick={() =>
+                        setAdminSweetLeftover(Math.min(orderForLeftovers.qtySweetPickup, v))
+                      }
+                      className="px-2 py-1 bg-stone-100 hover:bg-stone-200 text-stone-700 font-bold rounded-lg text-[10px]"
+                    >
+                      {v} un
+                    </button>
+                  ))}
+                </div>
+              </div>
+
+              {/* Live calculation */}
+              {(() => {
+                const sSold = Math.max(0, orderForLeftovers.qtySaltyPickup - adminSaltyLeftover);
+                const wSold = Math.max(0, orderForLeftovers.qtySweetPickup - adminSweetLeftover);
+                const finalTot =
+                  sSold * (orderForLeftovers.unitPriceSalty || prices?.priceSalty || DEFAULT_PRICES.priceSalty) +
+                  wSold * (orderForLeftovers.unitPriceSweet || prices?.priceSweet || DEFAULT_PRICES.priceSweet);
+                const bal = Math.max(0, finalTot - (orderForLeftovers.amountPaid || 0));
+
+                return (
+                  <div className="p-3.5 bg-amber-50 rounded-2xl border border-amber-300 space-y-1.5">
+                    <span className="font-extrabold text-[10px] uppercase text-amber-900 block">
+                      Cálculo Automático de Venda Efetiva
+                    </span>
+                    <div className="flex justify-between font-bold text-stone-800">
+                      <span>Pão Salgado Vendido:</span>
+                      <span>{sSold} un</span>
+                    </div>
+                    <div className="flex justify-between font-bold text-stone-800">
+                      <span>Pão Doce Vendido:</span>
+                      <span>{wSold} un</span>
+                    </div>
+                    <div className="pt-2 border-t border-amber-200 flex justify-between font-black text-stone-900 text-xs">
+                      <span>Novo Valor Final da Conta:</span>
+                      <span className="text-sm font-black text-amber-950">{formatCurrency(finalTot)}</span>
+                    </div>
+                    <div className="flex justify-between font-black text-rose-700 text-xs">
+                      <span>Saldo Final a Pagar:</span>
+                      <span>{formatCurrency(bal)}</span>
+                    </div>
+                  </div>
+                );
+              })()}
+
+              <div className="pt-2 flex items-center justify-end gap-2.5 border-t border-stone-100">
+                <button
+                  type="button"
+                  disabled={isSavingAdminLeftovers}
+                  onClick={() => setOrderForLeftovers(null)}
+                  className="px-4 py-2.5 font-bold text-stone-600 hover:text-stone-900 rounded-xl"
+                >
+                  Cancelar
+                </button>
+                <button
+                  type="submit"
+                  disabled={isSavingAdminLeftovers}
+                  className="px-5 py-2.5 bg-red-800 hover:bg-red-900 text-white font-black text-xs uppercase rounded-xl shadow-md transition disabled:opacity-50 flex items-center gap-1.5"
+                >
+                  <Sparkles className="w-3.5 h-3.5 text-amber-300" />
+                  <span>{isSavingAdminLeftovers ? 'Gravando...' : 'Confirmar e Gravar Sobras'}</span>
+                </button>
+              </div>
+            </form>
+          </div>
+        </div>
+      )}
     </div>
   );
 };
+

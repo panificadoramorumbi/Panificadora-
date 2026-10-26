@@ -1,4 +1,4 @@
-import React, { useState, useMemo } from 'react';
+import React, { useState, useMemo, useEffect } from 'react';
 import {
   ShoppingBag,
   PlusCircle,
@@ -19,6 +19,16 @@ import {
   Phone,
   Bell,
   Smartphone,
+  TrendingUp,
+  UserCheck,
+  Edit2,
+  Coins,
+  Percent,
+  Sliders,
+  CheckCircle,
+  KeyRound,
+  User,
+  Mail,
 } from 'lucide-react';
 import { Order, ProductPrices, PaymentRecord, InAppNotification, NotificationPreference } from '../../types';
 import { formatCurrency, formatDate, formatDateTime, calculateOrderMetrics, formatPhone } from '../../utils/formatters';
@@ -37,8 +47,8 @@ interface ResellerHomeProps {
   payments: PaymentRecord[];
   prices: ProductPrices;
   notifications: InAppNotification[];
-  activeTab: 'orders' | 'leftovers' | 'financial' | 'notifications';
-  setActiveTab: (tab: 'orders' | 'leftovers' | 'financial' | 'notifications') => void;
+  activeTab: 'orders' | 'leftovers' | 'financial' | 'profit' | 'notifications';
+  setActiveTab: (tab: 'orders' | 'leftovers' | 'financial' | 'profit' | 'notifications') => void;
 }
 
 export const ResellerHome: React.FC<ResellerHomeProps> = ({
@@ -150,6 +160,85 @@ export const ResellerHome: React.FC<ResellerHomeProps> = ({
     return myOrders.filter((o) => !o.leftoversRecorded && o.status === 'aguardando_sobras');
   }, [myOrders]);
 
+  // Resale Price Configuration (Preço de venda ao consumidor final pelo revendedor)
+  const [resalePriceSalty, setResalePriceSalty] = useState<number>(() => {
+    const saved = localStorage.getItem('morumbi_resale_salty');
+    return saved ? Number(saved) : 1.0;
+  });
+  const [resalePriceSweet, setResalePriceSweet] = useState<number>(() => {
+    const saved = localStorage.getItem('morumbi_resale_sweet');
+    return saved ? Number(saved) : 1.5;
+  });
+  const [showResaleSettings, setShowResaleSettings] = useState(false);
+
+  // Profit Simulator State
+  const [simSalty, setSimSalty] = useState<number>(60);
+  const [simSweet, setSimSweet] = useState<number>(20);
+
+  // Edit My Profile Modal State (Client can edit their own name, phone, login username, password)
+  const [showEditProfileModal, setShowEditProfileModal] = useState(false);
+  const [profileName, setProfileName] = useState('');
+  const [profilePhone, setProfilePhone] = useState('');
+  const [profileUsername, setProfileUsername] = useState('');
+  const [profileEmail, setProfileEmail] = useState('');
+  const [profilePasswordHint, setProfilePasswordHint] = useState('');
+  const [isSavingProfile, setIsSavingProfile] = useState(false);
+  const [profileSuccessMsg, setProfileSuccessMsg] = useState<string | null>(null);
+  const [profileErrorMsg, setProfileErrorMsg] = useState<string | null>(null);
+
+  const handleOpenProfileModal = () => {
+    setProfileName(userProfile?.displayName || '');
+    setProfilePhone(userProfile?.phone || '');
+    setProfileUsername(userProfile?.username || (userProfile?.email ? userProfile.email.split('@')[0] : ''));
+    setProfileEmail(userProfile?.email || '');
+    setProfilePasswordHint(userProfile?.simplePasswordHint || '123456');
+    setProfileSuccessMsg(null);
+    setProfileErrorMsg(null);
+    setShowEditProfileModal(true);
+  };
+
+  const handleSaveMyProfile = async (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!currentUser) return;
+    if (!profileName.trim()) {
+      setProfileErrorMsg('Por favor, informe seu nome completo.');
+      return;
+    }
+    if (!profilePhone.trim()) {
+      setProfileErrorMsg('Por favor, informe seu WhatsApp/telefone.');
+      return;
+    }
+
+    setIsSavingProfile(true);
+    setProfileErrorMsg(null);
+    try {
+      await updateUserProfile(currentUser.uid, {
+        displayName: profileName.trim(),
+        phone: profilePhone.trim(),
+        username: profileUsername.trim().toLowerCase().replace(/[^a-z0-9._-]/g, '') || undefined,
+        email: profileEmail.trim() || undefined,
+        simplePasswordHint: profilePasswordHint.trim() || undefined,
+      });
+      await refreshProfile();
+      setProfileSuccessMsg('Seus dados foram atualizados com sucesso!');
+      setTimeout(() => {
+        setShowEditProfileModal(false);
+        setProfileSuccessMsg(null);
+      }, 1400);
+    } catch (err: any) {
+      setProfileErrorMsg('Erro ao atualizar seus dados: ' + (err?.message || err));
+    } finally {
+      setIsSavingProfile(false);
+    }
+  };
+
+  const handleSaveResalePrice = (salty: number, sweet: number) => {
+    setResalePriceSalty(salty);
+    setResalePriceSweet(sweet);
+    localStorage.setItem('morumbi_resale_salty', salty.toString());
+    localStorage.setItem('morumbi_resale_sweet', sweet.toString());
+  };
+
   // Financial summary
   const financialSummary = useMemo(() => {
     let totalDue = 0;
@@ -164,6 +253,34 @@ export const ResellerHome: React.FC<ResellerHomeProps> = ({
 
     return { totalDue, totalPaid, balanceDue };
   }, [myOrders]);
+
+  // Reseller Profit Metrics (Cálculo detalhado de lucro no atacado vs revenda)
+  const profitMetrics = useMemo(() => {
+    let totalSaltySold = 0;
+    let totalSweetSold = 0;
+    let totalBakeryCost = 0;
+
+    myOrders.forEach((o) => {
+      const sSold = o.leftoversRecorded ? (o.qtySaltySold || 0) : (o.qtySaltyPickup || 0);
+      const wSold = o.leftoversRecorded ? (o.qtySweetSold || 0) : (o.qtySweetPickup || 0);
+      totalSaltySold += sSold;
+      totalSweetSold += wSold;
+      totalBakeryCost += o.finalTotal || o.expectedTotal || 0;
+    });
+
+    const totalResaleRevenue = totalSaltySold * resalePriceSalty + totalSweetSold * resalePriceSweet;
+    const totalNetProfit = totalResaleRevenue - totalBakeryCost;
+    const marginPercent = totalResaleRevenue > 0 ? (totalNetProfit / totalResaleRevenue) * 100 : 0;
+
+    return {
+      totalSaltySold,
+      totalSweetSold,
+      totalBakeryCost,
+      totalResaleRevenue,
+      totalNetProfit,
+      marginPercent,
+    };
+  }, [myOrders, resalePriceSalty, resalePriceSweet]);
 
   // Calculated preview for new order modal
   const newOrderPreview = useMemo(() => {
@@ -281,17 +398,29 @@ export const ResellerHome: React.FC<ResellerHomeProps> = ({
           </p>
         </div>
 
-        <button
-          onClick={() => {
-            setOrderError(null);
-            setShowConfirmSummary(false);
-            setShowNewOrderModal(true);
-          }}
-          className="bg-amber-400 hover:bg-amber-300 active:scale-95 text-stone-950 font-black text-xs uppercase px-5 py-3.5 rounded-2xl shadow-lg transition flex items-center justify-center gap-2 shrink-0"
-        >
-          <PlusCircle className="w-5 h-5 text-stone-950" />
-          <span>Fazer Novo Pedido</span>
-        </button>
+        <div className="flex flex-wrap items-center gap-2.5">
+          <button
+            type="button"
+            onClick={handleOpenProfileModal}
+            className="bg-white/10 hover:bg-white/20 active:scale-95 text-white font-bold text-xs uppercase px-4 py-3.5 rounded-2xl border border-white/20 transition flex items-center gap-2"
+            title="Alterar meus dados de cadastro (celular, e-mail, nome de login, senha)"
+          >
+            <Edit2 className="w-4 h-4 text-amber-300" />
+            <span>Editar Meus Dados</span>
+          </button>
+
+          <button
+            onClick={() => {
+              setOrderError(null);
+              setShowConfirmSummary(false);
+              setShowNewOrderModal(true);
+            }}
+            className="bg-amber-400 hover:bg-amber-300 active:scale-95 text-stone-950 font-black text-xs uppercase px-5 py-3.5 rounded-2xl shadow-lg transition flex items-center justify-center gap-2 shrink-0"
+          >
+            <PlusCircle className="w-5 h-5 text-stone-950" />
+            <span>Fazer Novo Pedido</span>
+          </button>
+        </div>
       </div>
 
       {/* Notification Bar Permission Banner (if not yet granted) */}
@@ -398,10 +527,21 @@ export const ResellerHome: React.FC<ResellerHomeProps> = ({
             </div>
           </div>
           <button
-            onClick={() => setActiveTab('leftovers')}
-            className="px-4 py-2 bg-amber-500 hover:bg-amber-400 text-stone-950 font-black text-xs uppercase rounded-xl shadow-xs transition shrink-0"
+            onClick={() => {
+              const first = ordersAwaitingLeftovers[0];
+              if (first) {
+                setSelectedOrderForLeftovers(first);
+                setSaltyLeftover(0);
+                setSweetLeftover(0);
+                setLeftoverError(null);
+              } else {
+                setActiveTab('leftovers');
+              }
+            }}
+            className="px-5 py-3 bg-amber-400 hover:bg-amber-300 active:scale-95 text-stone-950 font-black text-xs uppercase rounded-2xl shadow-md transition shrink-0 flex items-center justify-center gap-2"
           >
-            Registrar Sobras Agora
+            <Sparkles className="w-4 h-4 text-stone-950" />
+            <span>Digitar Sobras Agora</span>
           </button>
         </div>
       )}
@@ -427,6 +567,20 @@ export const ResellerHome: React.FC<ResellerHomeProps> = ({
           }`}
         >
           Registrar Sobras ({ordersAwaitingLeftovers.length})
+        </button>
+        <button
+          onClick={() => setActiveTab('profit')}
+          className={`pb-3 px-4 font-black text-xs uppercase transition border-b-2 whitespace-nowrap flex items-center gap-1.5 ${
+            activeTab === 'profit'
+              ? 'border-emerald-600 text-emerald-800'
+              : 'border-transparent text-stone-500 hover:text-stone-900'
+          }`}
+        >
+          <TrendingUp className="w-3.5 h-3.5 text-emerald-600" />
+          <span>Meu Lucro</span>
+          <span className="text-[10px] bg-emerald-100 text-emerald-800 font-bold px-1.5 py-0.5 rounded-full">
+            {formatCurrency(profitMetrics.totalNetProfit)}
+          </span>
         </button>
         <button
           onClick={() => setActiveTab('financial')}
@@ -456,7 +610,7 @@ export const ResellerHome: React.FC<ResellerHomeProps> = ({
           <div className="flex items-center justify-between mb-4">
             <h3 className="text-base font-black text-stone-900">Histórico de Pedidos</h3>
             <span className="text-xs text-stone-500 font-semibold">
-              Cada pedido possui identificador único
+              Identificação sequencial por pedido
             </span>
           </div>
 
@@ -465,53 +619,25 @@ export const ResellerHome: React.FC<ResellerHomeProps> = ({
               Você ainda não fez nenhum pedido. Clique em "Fazer Novo Pedido" acima para começar!
             </div>
           ) : (
-            <div className="overflow-x-auto">
-              <table className="w-full text-left text-xs">
-                <thead>
-                  <tr className="border-b border-stone-100 text-stone-400 uppercase text-[10px] font-bold">
-                    <th className="pb-3">Identificador</th>
-                    <th className="pb-3">Data Entrega</th>
-                    <th className="pb-3 text-right">Retiradas</th>
-                    <th className="pb-3 text-right">Sobras</th>
-                    <th className="pb-3 text-right">Qtd Vendida</th>
-                    <th className="pb-3 text-right">Valor Final</th>
-                    <th className="pb-3 text-right">Saldo a Pagar</th>
-                    <th className="pb-3 text-center">Situação</th>
-                    <th className="pb-3 text-center">Ação</th>
-                  </tr>
-                </thead>
-                <tbody className="divide-y divide-stone-100">
-                  {myOrders.map((order) => (
-                    <tr key={order.id} className="hover:bg-stone-50 transition">
-                      <td className="py-3 font-bold text-stone-900">{order.orderNumber}</td>
-                      <td className="py-3 text-stone-600">{formatDate(order.deliveryDate)}</td>
-                      <td className="py-3 text-right font-medium">
-                        {order.qtySaltyPickup} salg / {order.qtySweetPickup} doce
-                      </td>
-                      <td className="py-3 text-right text-stone-600">
-                        {order.leftoversRecorded ? (
-                          `${order.qtySaltyLeftover} salg / ${order.qtySweetLeftover} doce`
-                        ) : (
-                          <span className="text-amber-600 font-bold italic">Aguardando</span>
-                        )}
-                      </td>
-                      <td className="py-3 text-right font-bold text-stone-900">
-                        {order.qtySaltySold} salg / {order.qtySweetSold} doce
-                      </td>
-                      <td className="py-3 text-right font-black text-stone-900">
-                        {formatCurrency(order.finalTotal)}
-                        {!order.leftoversRecorded && (
-                          <span className="block text-[9px] text-amber-700 font-normal">
-                            (previsão antes de sobras)
-                          </span>
-                        )}
-                      </td>
-                      <td className="py-3 text-right font-black text-rose-700">
-                        {formatCurrency(order.balanceDue)}
-                      </td>
-                      <td className="py-3 text-center">
+            <>
+              {/* Mobile View: Cards Verticais Sem Rolagem Horizontal */}
+              <div className="block md:hidden space-y-3">
+                {myOrders.map((order) => {
+                  const sSold = order.leftoversRecorded ? (order.qtySaltySold || 0) : (order.qtySaltyPickup || 0);
+                  const wSold = order.leftoversRecorded ? (order.qtySweetSold || 0) : (order.qtySweetPickup || 0);
+                  const estRev = sSold * resalePriceSalty + wSold * resalePriceSweet;
+                  const orderCost = order.finalTotal || order.expectedTotal || 0;
+                  const orderProfit = estRev - orderCost;
+
+                  return (
+                    <div
+                      key={order.id}
+                      className="p-4 bg-stone-50 rounded-2xl border border-stone-200 space-y-3 text-xs shadow-2xs"
+                    >
+                      <div className="flex items-center justify-between pb-2 border-b border-stone-200">
+                        <span className="font-black text-stone-900 text-sm">{order.orderNumber}</span>
                         <span
-                          className={`inline-block px-2.5 py-1 rounded-full text-[10px] font-bold ${
+                          className={`inline-block px-2.5 py-0.5 rounded-full text-[10px] font-bold ${
                             order.status === 'concluido'
                               ? 'bg-emerald-100 text-emerald-800'
                               : 'bg-amber-100 text-amber-800'
@@ -519,28 +645,448 @@ export const ResellerHome: React.FC<ResellerHomeProps> = ({
                         >
                           {order.status === 'concluido' ? 'Concluído' : 'Aguardando Sobras'}
                         </span>
-                      </td>
-                      <td className="py-3 text-center">
+                      </div>
+
+                      <div className="flex items-center justify-between text-stone-600">
+                        <span>Data de Entrega:</span>
+                        <span className="font-bold text-stone-900">{formatDate(order.deliveryDate)}</span>
+                      </div>
+
+                      <div className="grid grid-cols-3 gap-2 bg-white p-2.5 rounded-xl border border-stone-200 text-center">
+                        <div>
+                          <span className="text-[10px] uppercase font-bold text-stone-400 block">Retiradas</span>
+                          <span className="font-bold text-stone-800">
+                            {order.qtySaltyPickup}s / {order.qtySweetPickup}d
+                          </span>
+                        </div>
+                        <div>
+                          <span className="text-[10px] uppercase font-bold text-stone-400 block">Sobras</span>
+                          <span className="font-bold text-amber-700">
+                            {order.leftoversRecorded
+                              ? `${order.qtySaltyLeftover}s / ${order.qtySweetLeftover}d`
+                              : 'Pendente'}
+                          </span>
+                        </div>
+                        <div>
+                          <span className="text-[10px] uppercase font-bold text-stone-400 block">Vendido</span>
+                          <span className="font-black text-stone-900">
+                            {order.qtySaltySold}s / {order.qtySweetSold}d
+                          </span>
+                        </div>
+                      </div>
+
+                      {/* Values & Profit Grid */}
+                      <div className="grid grid-cols-2 gap-2 bg-emerald-50/60 p-2.5 rounded-xl border border-emerald-200">
+                        <div>
+                          <span className="text-[10px] uppercase font-bold text-stone-500 block">Custo Padaria</span>
+                          <span className="font-black text-stone-900 text-xs">
+                            {formatCurrency(order.finalTotal)}
+                          </span>
+                        </div>
+                        <div className="text-right">
+                          <span className="text-[10px] uppercase font-bold text-emerald-800 block">Seu Lucro</span>
+                          <span className="font-black text-emerald-700 text-xs">
+                            + {formatCurrency(orderProfit)}
+                          </span>
+                        </div>
+                      </div>
+
+                      <div className="flex items-center justify-between pt-1">
+                        <div>
+                          <span className="text-[10px] text-stone-500 uppercase font-bold block">Saldo a Pagar</span>
+                          <span className={`font-black text-sm ${order.balanceDue > 0 ? 'text-rose-700' : 'text-emerald-700'}`}>
+                            {formatCurrency(order.balanceDue)}
+                          </span>
+                        </div>
+
                         {!order.leftoversRecorded && (
                           <button
+                            type="button"
                             onClick={() => {
                               setSelectedOrderForLeftovers(order);
                               setSaltyLeftover(0);
                               setSweetLeftover(0);
                               setLeftoverError(null);
                             }}
-                            className="px-2.5 py-1 rounded-xl bg-amber-400 hover:bg-amber-500 font-bold text-[10px] text-stone-950 shadow-xs transition"
+                            className="px-3 py-1.5 rounded-xl bg-amber-400 hover:bg-amber-500 font-bold text-xs text-stone-950 shadow-xs transition"
                           >
                             Informar Sobras
                           </button>
                         )}
-                      </td>
+                      </div>
+                    </div>
+                  );
+                })}
+              </div>
+
+              {/* Desktop View: Full Table */}
+              <div className="hidden md:block overflow-x-auto">
+                <table className="w-full text-left text-xs">
+                  <thead>
+                    <tr className="border-b border-stone-100 text-stone-400 uppercase text-[10px] font-bold">
+                      <th className="pb-3">Identificador</th>
+                      <th className="pb-3">Data Entrega</th>
+                      <th className="pb-3 text-right">Retiradas</th>
+                      <th className="pb-3 text-right">Sobras</th>
+                      <th className="pb-3 text-right">Qtd Vendida</th>
+                      <th className="pb-3 text-right">Custo Padaria</th>
+                      <th className="pb-3 text-right text-emerald-800">Seu Lucro</th>
+                      <th className="pb-3 text-right">Saldo a Pagar</th>
+                      <th className="pb-3 text-center">Situação</th>
+                      <th className="pb-3 text-center">Ação</th>
                     </tr>
-                  ))}
-                </tbody>
-              </table>
+                  </thead>
+                  <tbody className="divide-y divide-stone-100">
+                    {myOrders.map((order) => {
+                      const sSold = order.leftoversRecorded ? (order.qtySaltySold || 0) : (order.qtySaltyPickup || 0);
+                      const wSold = order.leftoversRecorded ? (order.qtySweetSold || 0) : (order.qtySweetPickup || 0);
+                      const estRev = sSold * resalePriceSalty + wSold * resalePriceSweet;
+                      const orderCost = order.finalTotal || order.expectedTotal || 0;
+                      const orderProfit = estRev - orderCost;
+
+                      return (
+                        <tr key={order.id} className="hover:bg-stone-50 transition">
+                          <td className="py-3 font-bold text-stone-900">{order.orderNumber}</td>
+                          <td className="py-3 text-stone-600">{formatDate(order.deliveryDate)}</td>
+                          <td className="py-3 text-right font-medium">
+                            {order.qtySaltyPickup} salg / {order.qtySweetPickup} doce
+                          </td>
+                          <td className="py-3 text-right text-stone-600">
+                            {order.leftoversRecorded ? (
+                              `${order.qtySaltyLeftover} salg / ${order.qtySweetLeftover} doce`
+                            ) : (
+                              <span className="text-amber-600 font-bold italic">Aguardando</span>
+                            )}
+                          </td>
+                          <td className="py-3 text-right font-bold text-stone-900">
+                            {order.qtySaltySold} salg / {order.qtySweetSold} doce
+                          </td>
+                          <td className="py-3 text-right font-black text-stone-900">
+                            {formatCurrency(order.finalTotal)}
+                          </td>
+                          <td className="py-3 text-right font-black text-emerald-700">
+                            + {formatCurrency(orderProfit)}
+                          </td>
+                          <td className="py-3 text-right font-black text-rose-700">
+                            {formatCurrency(order.balanceDue)}
+                          </td>
+                          <td className="py-3 text-center">
+                            <span
+                              className={`inline-block px-2.5 py-1 rounded-full text-[10px] font-bold ${
+                                order.status === 'concluido'
+                                  ? 'bg-emerald-100 text-emerald-800'
+                                  : 'bg-amber-100 text-amber-800'
+                              }`}
+                            >
+                              {order.status === 'concluido' ? 'Concluído' : 'Aguardando Sobras'}
+                            </span>
+                          </td>
+                          <td className="py-3 text-center">
+                            {!order.leftoversRecorded && (
+                              <button
+                                onClick={() => {
+                                  setSelectedOrderForLeftovers(order);
+                                  setSaltyLeftover(0);
+                                  setSweetLeftover(0);
+                                  setLeftoverError(null);
+                                }}
+                                className="px-2.5 py-1 rounded-xl bg-amber-400 hover:bg-amber-500 font-bold text-[10px] text-stone-950 shadow-xs transition"
+                              >
+                                Informar Sobras
+                              </button>
+                            )}
+                          </td>
+                        </tr>
+                      );
+                    })}
+                  </tbody>
+                </table>
+              </div>
+            </>
+          )}
+        </div>
+      )}
+
+      {/* TAB CONTENT: MEU LUCRO (ABA EXCLUSIVA DE GANHO E SIMULADOR) */}
+      {activeTab === 'profit' && (
+        <div className="space-y-6">
+          {/* Header Card */}
+          <div className="bg-gradient-to-r from-emerald-950 via-stone-900 to-emerald-950 rounded-3xl p-6 shadow-xl text-white border border-emerald-800 flex flex-col sm:flex-row sm:items-center justify-between gap-4">
+            <div>
+              <div className="flex items-center gap-2">
+                <span className="p-1.5 rounded-xl bg-emerald-800 text-emerald-300">
+                  <TrendingUp className="w-5 h-5" />
+                </span>
+                <span className="text-[10px] font-black uppercase tracking-widest text-emerald-300">
+                  Painel de Lucratividade
+                </span>
+              </div>
+              <h3 className="text-xl sm:text-2xl font-black mt-2 tracking-tight">
+                Seu Lucro Real no Bolso
+              </h3>
+              <p className="text-xs text-stone-300 mt-0.5">
+                Cálculo exato de quanto você fatura revendendo os pães da Panificadora Morumbi.
+              </p>
+            </div>
+
+            <button
+              type="button"
+              onClick={() => setShowResaleSettings(!showResaleSettings)}
+              className="px-4 py-2.5 bg-emerald-600 hover:bg-emerald-500 text-white font-bold text-xs uppercase rounded-xl transition shadow-xs flex items-center justify-center gap-2 shrink-0"
+            >
+              <Sliders className="w-4 h-4" />
+              <span>{showResaleSettings ? 'Fechar Configuração' : 'Configurar Meus Preços'}</span>
+            </button>
+          </div>
+
+          {/* Resale Price Settings Drawer */}
+          {showResaleSettings && (
+            <div className="bg-white rounded-3xl p-6 shadow-sm border-2 border-emerald-300 space-y-4">
+              <div className="flex items-center justify-between">
+                <div>
+                  <h4 className="font-black text-sm text-stone-900">
+                    Definir Seus Preços de Venda ao Consumidor Final
+                  </h4>
+                  <p className="text-xs text-stone-500">
+                    Informe por quanto você vende cada pão aos seus clientes para calcularmos seu lucro líquido com precisão.
+                  </p>
+                </div>
+              </div>
+
+              <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
+                <div className="p-4 bg-stone-50 rounded-2xl border border-stone-200">
+                  <div className="flex justify-between items-center mb-1">
+                    <label className="text-xs font-bold text-stone-800">Pão Salgado (Francês)</label>
+                    <span className="text-[10px] text-amber-800 font-bold">
+                      Custo Padaria: {formatCurrency(prices.priceSalty)}
+                    </span>
+                  </div>
+                  <div className="flex items-center gap-2 mt-2">
+                    <span className="text-xs font-bold text-stone-500">R$</span>
+                    <input
+                      type="number"
+                      step="0.05"
+                      min={prices.priceSalty}
+                      value={resalePriceSalty}
+                      onChange={(e) =>
+                        handleSaveResalePrice(parseFloat(e.target.value) || 0, resalePriceSweet)
+                      }
+                      className="w-full px-3 py-2 bg-white border border-stone-300 rounded-xl text-sm font-black text-stone-900"
+                    />
+                  </div>
+                  <p className="text-[10px] text-emerald-700 font-bold mt-2">
+                    Ganho por pão: + {formatCurrency(Math.max(0, resalePriceSalty - prices.priceSalty))}
+                  </p>
+                </div>
+
+                <div className="p-4 bg-stone-50 rounded-2xl border border-stone-200">
+                  <div className="flex justify-between items-center mb-1">
+                    <label className="text-xs font-bold text-stone-800">Pão Doce</label>
+                    <span className="text-[10px] text-amber-800 font-bold">
+                      Custo Padaria: {formatCurrency(prices.priceSweet)}
+                    </span>
+                  </div>
+                  <div className="flex items-center gap-2 mt-2">
+                    <span className="text-xs font-bold text-stone-500">R$</span>
+                    <input
+                      type="number"
+                      step="0.05"
+                      min={prices.priceSweet}
+                      value={resalePriceSweet}
+                      onChange={(e) =>
+                        handleSaveResalePrice(resalePriceSalty, parseFloat(e.target.value) || 0)
+                      }
+                      className="w-full px-3 py-2 bg-white border border-stone-300 rounded-xl text-sm font-black text-stone-900"
+                    />
+                  </div>
+                  <p className="text-[10px] text-emerald-700 font-bold mt-2">
+                    Ganho por pão: + {formatCurrency(Math.max(0, resalePriceSweet - prices.priceSweet))}
+                  </p>
+                </div>
+              </div>
             </div>
           )}
+
+          {/* 4 Big Summary Cards */}
+          <div className="grid grid-cols-2 sm:grid-cols-4 gap-4">
+            <div className="bg-emerald-50 rounded-3xl p-5 border-2 border-emerald-300 shadow-xs">
+              <span className="text-[10px] font-black uppercase tracking-wider text-emerald-900 block">
+                Lucro Líquido no Bolso
+              </span>
+              <p className="text-2xl font-black text-emerald-700 mt-1">
+                {formatCurrency(profitMetrics.totalNetProfit)}
+              </p>
+              <p className="text-[11px] text-emerald-800 mt-1 font-semibold">
+                Margem média: {profitMetrics.marginPercent.toFixed(1)}%
+              </p>
+            </div>
+
+            <div className="bg-white rounded-3xl p-5 border border-stone-200 shadow-sm">
+              <span className="text-[10px] font-extrabold uppercase tracking-wider text-stone-500 block">
+                Faturamento Total
+              </span>
+              <p className="text-2xl font-black text-stone-900 mt-1">
+                {formatCurrency(profitMetrics.totalResaleRevenue)}
+              </p>
+              <p className="text-[11px] text-stone-500 mt-1">Vendas aos seus clientes</p>
+            </div>
+
+            <div className="bg-white rounded-3xl p-5 border border-stone-200 shadow-sm">
+              <span className="text-[10px] font-extrabold uppercase tracking-wider text-stone-500 block">
+                Custo da Padaria
+              </span>
+              <p className="text-2xl font-black text-amber-950 mt-1">
+                {formatCurrency(profitMetrics.totalBakeryCost)}
+              </p>
+              <p className="text-[11px] text-stone-500 mt-1">Preço pago no atacado</p>
+            </div>
+
+            <div className="bg-white rounded-3xl p-5 border border-stone-200 shadow-sm">
+              <span className="text-[10px] font-extrabold uppercase tracking-wider text-stone-500 block">
+                Volume Vendido
+              </span>
+              <p className="text-lg font-black text-stone-900 mt-1">
+                {profitMetrics.totalSaltySold} salg / {profitMetrics.totalSweetSold} doces
+              </p>
+              <p className="text-[11px] text-stone-500 mt-1">
+                Total: {profitMetrics.totalSaltySold + profitMetrics.totalSweetSold} pães
+              </p>
+            </div>
+          </div>
+
+          {/* Interactive Profit Simulator */}
+          <div className="bg-white rounded-3xl p-6 shadow-sm border border-stone-200 space-y-4">
+            <div className="flex items-center gap-2">
+              <div className="w-8 h-8 rounded-xl bg-amber-400 text-stone-950 flex items-center justify-center font-black">
+                <Coins className="w-4 h-4" />
+              </div>
+              <div>
+                <h4 className="text-sm font-black text-stone-900">
+                  Simulador de Lucro para o Próximo Pedido
+                </h4>
+                <p className="text-xs text-stone-500">
+                  Ajuste a quantidade que pretende pedir amanhã e veja na hora quanto vai sobrar no seu bolso:
+                </p>
+              </div>
+            </div>
+
+            <div className="grid grid-cols-1 sm:grid-cols-2 gap-4 pt-2">
+              <div className="p-4 bg-stone-50 rounded-2xl border border-stone-200 space-y-2">
+                <div className="flex justify-between items-center">
+                  <label className="text-xs font-bold text-stone-800">
+                    Quantos Pães Salgados vai pedir?
+                  </label>
+                  <span className="text-xs font-black text-red-800">{simSalty} un</span>
+                </div>
+                <input
+                  type="range"
+                  min="0"
+                  max="300"
+                  step="10"
+                  value={simSalty}
+                  onChange={(e) => setSimSalty(parseInt(e.target.value) || 0)}
+                  className="w-full accent-red-800"
+                />
+                <div className="flex gap-2">
+                  {[30, 50, 100, 150].map((v) => (
+                    <button
+                      key={v}
+                      type="button"
+                      onClick={() => setSimSalty(v)}
+                      className={`px-2 py-1 rounded-lg text-[10px] font-bold border transition ${
+                        simSalty === v
+                          ? 'bg-red-800 text-white border-red-800'
+                          : 'bg-white text-stone-700 border-stone-200'
+                      }`}
+                    >
+                      {v} un
+                    </button>
+                  ))}
+                </div>
+              </div>
+
+              <div className="p-4 bg-stone-50 rounded-2xl border border-stone-200 space-y-2">
+                <div className="flex justify-between items-center">
+                  <label className="text-xs font-bold text-stone-800">
+                    Quantos Pães Doces vai pedir?
+                  </label>
+                  <span className="text-xs font-black text-red-800">{simSweet} un</span>
+                </div>
+                <input
+                  type="range"
+                  min="0"
+                  max="150"
+                  step="5"
+                  value={simSweet}
+                  onChange={(e) => setSimSweet(parseInt(e.target.value) || 0)}
+                  className="w-full accent-red-800"
+                />
+                <div className="flex gap-2">
+                  {[10, 20, 50].map((v) => (
+                    <button
+                      key={v}
+                      type="button"
+                      onClick={() => setSimSweet(v)}
+                      className={`px-2 py-1 rounded-lg text-[10px] font-bold border transition ${
+                        simSweet === v
+                          ? 'bg-red-800 text-white border-red-800'
+                          : 'bg-white text-stone-700 border-stone-200'
+                      }`}
+                    >
+                      {v} un
+                    </button>
+                  ))}
+                </div>
+              </div>
+            </div>
+
+            {/* Simulation Result */}
+            {(() => {
+              const simBakeryCost = simSalty * prices.priceSalty + simSweet * prices.priceSweet;
+              const simRevenue = simSalty * resalePriceSalty + simSweet * resalePriceSweet;
+              const simProfit = simRevenue - simBakeryCost;
+              const simMargin = simRevenue > 0 ? (simProfit / simRevenue) * 100 : 0;
+
+              return (
+                <div className="p-5 bg-gradient-to-r from-emerald-500/10 via-amber-500/10 to-emerald-500/10 rounded-2xl border-2 border-emerald-400 flex flex-col sm:flex-row sm:items-center justify-between gap-4">
+                  <div className="space-y-1">
+                    <span className="text-[10px] uppercase font-black text-emerald-950 block">
+                      Resultado da Simulação ({simSalty} salgados + {simSweet} doces):
+                    </span>
+                    <p className="text-xs text-stone-700">
+                      Custo Padaria: <strong>{formatCurrency(simBakeryCost)}</strong> • Venda Prevista:{' '}
+                      <strong>{formatCurrency(simRevenue)}</strong>
+                    </p>
+                  </div>
+
+                  <div className="flex items-center gap-4">
+                    <div className="text-right">
+                      <span className="text-2xl font-black text-emerald-700 block">
+                        + {formatCurrency(simProfit)}
+                      </span>
+                      <span className="text-[11px] font-extrabold text-emerald-800">
+                        {simMargin.toFixed(1)}% de lucro líquido
+                      </span>
+                    </div>
+
+                    <button
+                      type="button"
+                      onClick={() => {
+                        setQtySalty(simSalty);
+                        setQtySweet(simSweet);
+                        setShowConfirmSummary(false);
+                        setShowNewOrderModal(true);
+                      }}
+                      className="px-4 py-2.5 bg-emerald-600 hover:bg-emerald-700 text-white font-black text-xs uppercase rounded-xl shadow-md transition flex items-center gap-1.5 shrink-0"
+                    >
+                      <PlusCircle className="w-4 h-4" />
+                      <span>Pedir Agora</span>
+                    </button>
+                  </div>
+                </div>
+              );
+            })()}
+          </div>
         </div>
       )}
 
@@ -924,19 +1470,39 @@ export const ResellerHome: React.FC<ResellerHomeProps> = ({
                   />
                 </div>
 
-                {/* Live value preview */}
-                <div className="p-4 bg-amber-400/20 rounded-2xl border border-amber-400/50 flex items-center justify-between">
-                  <div>
-                    <span className="text-[10px] uppercase font-black text-amber-950">
-                      Previsão Estimada Inicial
+                {/* Live value preview: Custo da Padaria E Lucro do Revendedor */}
+                <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+                  <div className="p-3.5 bg-amber-400/20 rounded-2xl border border-amber-400/50">
+                    <span className="text-[10px] uppercase font-black text-amber-950 block">
+                      Custo da Padaria (Você Paga)
                     </span>
-                    <p className="text-xs text-amber-900 font-medium">
+                    <span className="text-xl font-black text-amber-950 block mt-1">
+                      {formatCurrency(newOrderPreview.expectedTotal)}
+                    </span>
+                    <p className="text-[10px] text-amber-900 mt-0.5">
                       {qtySalty} salgados + {qtySweet} doces
                     </p>
                   </div>
-                  <span className="text-xl font-black text-amber-950">
-                    {formatCurrency(newOrderPreview.expectedTotal)}
-                  </span>
+
+                  {(() => {
+                    const estRevenue = qtySalty * resalePriceSalty + qtySweet * resalePriceSweet;
+                    const estProfit = estRevenue - newOrderPreview.expectedTotal;
+                    const estMargin = estRevenue > 0 ? (estProfit / estRevenue) * 100 : 0;
+                    return (
+                      <div className="p-3.5 bg-emerald-50 rounded-2xl border-2 border-emerald-300">
+                        <span className="text-[10px] uppercase font-black text-emerald-950 flex items-center gap-1">
+                          <TrendingUp className="w-3.5 h-3.5 text-emerald-700" />
+                          Seu Lucro Estimado
+                        </span>
+                        <span className="text-xl font-black text-emerald-700 block mt-1">
+                          + {formatCurrency(estProfit)}
+                        </span>
+                        <p className="text-[10px] text-emerald-800 font-semibold mt-0.5">
+                          Margem: {estMargin.toFixed(0)}% no seu bolso
+                        </p>
+                      </div>
+                    );
+                  })()}
                 </div>
 
                 <div className="flex items-center justify-end gap-2 pt-2 border-t border-stone-100">
@@ -963,7 +1529,7 @@ export const ResellerHome: React.FC<ResellerHomeProps> = ({
               <div className="space-y-4 mt-5 text-xs">
                 <div className="p-4 bg-amber-50 rounded-2xl border border-amber-300">
                   <h4 className="font-black text-amber-950 text-sm mb-3">
-                    Confirmação do Pedido e Previsão
+                    Confirmação do Pedido e Previsão de Lucro
                   </h4>
 
                   <div className="space-y-2 text-stone-700">
@@ -990,9 +1556,22 @@ export const ResellerHome: React.FC<ResellerHomeProps> = ({
                       </div>
                     )}
                     <div className="pt-2 border-t-2 border-amber-300 flex justify-between font-black text-sm text-stone-900">
-                      <span>Valor Previsto:</span>
+                      <span>Custo Previsto da Padaria:</span>
                       <span className="text-amber-900">{formatCurrency(newOrderPreview.expectedTotal)}</span>
                     </div>
+                    {(() => {
+                      const estRevenue = qtySalty * resalePriceSalty + qtySweet * resalePriceSweet;
+                      const estProfit = estRevenue - newOrderPreview.expectedTotal;
+                      return (
+                        <div className="pt-1.5 flex justify-between font-black text-sm text-emerald-800">
+                          <span className="flex items-center gap-1">
+                            <TrendingUp className="w-4 h-4 text-emerald-600" />
+                            Seu Lucro Estimado no Bolso:
+                          </span>
+                          <span className="text-emerald-700">+ {formatCurrency(estProfit)}</span>
+                        </div>
+                      );
+                    })()}
                   </div>
                 </div>
 
@@ -1210,6 +1789,155 @@ export const ResellerHome: React.FC<ResellerHomeProps> = ({
           </div>
         </div>
       )}
+
+      {/* MODAL: EDITAR MEUS DADOS (REVENDEDOR) */}
+      {showEditProfileModal && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-stone-950/70 backdrop-blur-xs overflow-y-auto">
+          <div className="bg-white rounded-3xl max-w-md w-full p-6 sm:p-7 shadow-2xl border border-stone-200 my-8">
+            <div className="flex items-center justify-between pb-4 border-b border-stone-100">
+              <div className="flex items-center gap-2.5">
+                <div className="w-9 h-9 rounded-xl bg-red-800 text-white flex items-center justify-center font-bold shadow">
+                  <UserCheck className="w-5 h-5 text-amber-300" />
+                </div>
+                <div>
+                  <h3 className="text-base font-black text-stone-900">Editar Meus Dados</h3>
+                  <p className="text-[11px] text-stone-500">Mantenha suas informações de contato atualizadas</p>
+                </div>
+              </div>
+              <button
+                type="button"
+                onClick={() => setShowEditProfileModal(false)}
+                className="p-1 rounded-full text-stone-400 hover:text-stone-700"
+              >
+                <X className="w-5 h-5" />
+              </button>
+            </div>
+
+            {profileErrorMsg && (
+              <div className="mt-4 p-3 rounded-xl bg-rose-50 border border-rose-200 text-xs text-rose-800 font-semibold flex items-start gap-2">
+                <AlertCircle className="w-4 h-4 shrink-0 text-rose-600 mt-0.5" />
+                <span>{profileErrorMsg}</span>
+              </div>
+            )}
+
+            {profileSuccessMsg && (
+              <div className="mt-4 p-3 rounded-xl bg-emerald-50 border border-emerald-200 text-xs text-emerald-800 font-semibold flex items-start gap-2">
+                <CheckCircle className="w-4 h-4 shrink-0 text-emerald-600 mt-0.5" />
+                <span>{profileSuccessMsg}</span>
+              </div>
+            )}
+
+            <form onSubmit={handleSaveMyProfile} className="mt-4 space-y-3.5 text-xs">
+              <div>
+                <label className="block text-xs font-bold text-stone-700 uppercase mb-1">
+                  Seu Nome Completo *
+                </label>
+                <input
+                  type="text"
+                  required
+                  value={profileName}
+                  onChange={(e) => setProfileName(e.target.value)}
+                  placeholder="Seu nome"
+                  className="w-full px-3.5 py-2.5 bg-stone-50 border border-stone-300 rounded-xl font-bold text-stone-900 focus:outline-hidden focus:ring-2 focus:ring-red-800 focus:bg-white"
+                />
+              </div>
+
+              <div>
+                <label className="block text-xs font-bold text-stone-700 uppercase mb-1">
+                  Seu WhatsApp / Telefone *
+                </label>
+                <div className="relative">
+                  <div className="absolute inset-y-0 left-0 pl-3 flex items-center pointer-events-none text-stone-400">
+                    <Phone className="w-4 h-4" />
+                  </div>
+                  <input
+                    type="tel"
+                    required
+                    value={profilePhone}
+                    onChange={(e) => setProfilePhone(e.target.value)}
+                    placeholder="(11) 98765-4321"
+                    className="w-full pl-9 pr-3.5 py-2.5 bg-stone-50 border border-stone-300 rounded-xl font-bold text-stone-900 focus:outline-hidden focus:ring-2 focus:ring-red-800 focus:bg-white"
+                  />
+                </div>
+              </div>
+
+              <div>
+                <label className="block text-xs font-bold text-stone-700 uppercase mb-1">
+                  Seu Nome de Usuário (Login)
+                </label>
+                <div className="relative">
+                  <div className="absolute inset-y-0 left-0 pl-3 flex items-center pointer-events-none text-stone-400">
+                    <User className="w-4 h-4" />
+                  </div>
+                  <input
+                    type="text"
+                    value={profileUsername}
+                    onChange={(e) =>
+                      setProfileUsername(e.target.value.toLowerCase().replace(/[^a-z0-9._-]/g, ''))
+                    }
+                    placeholder="ex: carlos"
+                    className="w-full pl-9 pr-3.5 py-2.5 bg-stone-50 border border-stone-300 rounded-xl font-mono font-bold text-stone-900 focus:outline-hidden focus:ring-2 focus:ring-red-800 focus:bg-white"
+                  />
+                </div>
+              </div>
+
+              <div>
+                <label className="block text-xs font-bold text-stone-700 uppercase mb-1">
+                  Sua Senha de Acesso
+                </label>
+                <div className="relative">
+                  <div className="absolute inset-y-0 left-0 pl-3 flex items-center pointer-events-none text-stone-400">
+                    <KeyRound className="w-4 h-4" />
+                  </div>
+                  <input
+                    type="text"
+                    value={profilePasswordHint}
+                    onChange={(e) => setProfilePasswordHint(e.target.value)}
+                    placeholder="Sua senha simples"
+                    className="w-full pl-9 pr-3.5 py-2.5 bg-stone-50 border border-stone-300 rounded-xl font-mono font-bold text-stone-900 focus:outline-hidden focus:ring-2 focus:ring-red-800 focus:bg-white"
+                  />
+                </div>
+              </div>
+
+              <div>
+                <label className="block text-xs font-bold text-stone-500 uppercase mb-1">
+                  E-mail (Opcional)
+                </label>
+                <div className="relative">
+                  <div className="absolute inset-y-0 left-0 pl-3 flex items-center pointer-events-none text-stone-400">
+                    <Mail className="w-4 h-4" />
+                  </div>
+                  <input
+                    type="email"
+                    value={profileEmail}
+                    onChange={(e) => setProfileEmail(e.target.value)}
+                    placeholder="seuemail@exemplo.com"
+                    className="w-full pl-9 pr-3.5 py-2.5 bg-stone-50 border border-stone-200 rounded-xl text-stone-700 focus:outline-hidden focus:ring-2 focus:ring-red-800 focus:bg-white"
+                  />
+                </div>
+              </div>
+
+              <div className="flex items-center justify-end gap-2 pt-3 border-t border-stone-100">
+                <button
+                  type="button"
+                  onClick={() => setShowEditProfileModal(false)}
+                  className="px-4 py-2.5 text-xs font-bold text-stone-600 hover:text-stone-900"
+                >
+                  Cancelar
+                </button>
+                <button
+                  type="submit"
+                  disabled={isSavingProfile}
+                  className="px-5 py-2.5 bg-red-800 hover:bg-red-900 active:scale-95 text-white font-black text-xs uppercase rounded-xl shadow-md transition disabled:opacity-50"
+                >
+                  {isSavingProfile ? 'Salvando...' : 'Salvar Meus Dados'}
+                </button>
+              </div>
+            </form>
+          </div>
+        </div>
+      )}
     </div>
   );
 };
+
