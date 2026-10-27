@@ -114,6 +114,14 @@ export function subscribeUsers(onUpdate: (users: UserProfile[]) => void): () => 
           role: d.role || 'revendedor',
           clientType: d.clientType || 'revendedor',
           active: d.active !== undefined ? d.active : true,
+          customPriceSalty:
+            d.customPriceSalty !== undefined && Number(d.customPriceSalty) > 0
+              ? Number(d.customPriceSalty)
+              : undefined,
+          customPriceSweet:
+            d.customPriceSweet !== undefined && Number(d.customPriceSweet) > 0
+              ? Number(d.customPriceSweet)
+              : undefined,
           createdAt: d.createdAt || '',
           updatedAt: d.updatedAt,
           notificationPreference: d.notificationPreference || 'in_app',
@@ -311,6 +319,8 @@ export async function createOrder(params: {
   deliveryDate: string;
   qtySaltyPickup: number;
   qtySweetPickup: number;
+  unitPriceSalty?: number;
+  unitPriceSweet?: number;
   notes?: string;
   currentPrices: ProductPrices;
 }): Promise<string> {
@@ -321,9 +331,20 @@ export async function createOrder(params: {
     deliveryDate,
     qtySaltyPickup,
     qtySweetPickup,
+    unitPriceSalty: customSaltyPrice,
+    unitPriceSweet: customSweetPrice,
     notes,
     currentPrices,
   } = params;
+
+  const unitPriceSalty =
+    customSaltyPrice !== undefined && Number(customSaltyPrice) > 0
+      ? Number(customSaltyPrice)
+      : currentPrices.priceSalty;
+  const unitPriceSweet =
+    customSweetPrice !== undefined && Number(customSweetPrice) > 0
+      ? Number(customSweetPrice)
+      : currentPrices.priceSweet;
 
   const metrics = calculateOrderMetrics({
     qtySaltyPickup,
@@ -331,8 +352,8 @@ export async function createOrder(params: {
     qtySaltyLeftover: 0,
     qtySweetLeftover: 0,
     leftoversRecorded: false,
-    unitPriceSalty: currentPrices.priceSalty,
-    unitPriceSweet: currentPrices.priceSweet,
+    unitPriceSalty,
+    unitPriceSweet,
   });
 
   // Sequential order numbering per client: Pedido #01, #02, #03...
@@ -360,8 +381,8 @@ export async function createOrder(params: {
     leftoversRecorded: false,
     qtySaltySold: metrics.qtySaltySold,
     qtySweetSold: metrics.qtySweetSold,
-    unitPriceSalty: currentPrices.priceSalty,
-    unitPriceSweet: currentPrices.priceSweet,
+    unitPriceSalty,
+    unitPriceSweet,
     expectedTotal: metrics.expectedTotal,
     finalTotal: metrics.expectedTotal,
     status: 'aguardando_sobras',
@@ -839,6 +860,14 @@ export async function deleteUserProfile(uid: string) {
     for (const d of notifsSnap.docs) {
       await deleteDoc(doc(db, 'notifications', d.id));
     }
+
+    // 5. Cascade delete audit logs for this reseller's orders
+    for (const d of ordersSnap.docs) {
+      const auditSnap = await getDocs(query(collection(db, 'audit_logs'), where('orderId', '==', d.id)));
+      for (const a of auditSnap.docs) {
+        await deleteDoc(doc(db, 'audit_logs', a.id));
+      }
+    }
   } catch (error) {
     handleFirestoreError(error, OperationType.DELETE, `users/${uid}`);
   }
@@ -910,5 +939,101 @@ export async function resetAllHistoricalData(): Promise<{ deletedOrders: number;
   } catch (error) {
     handleFirestoreError(error, OperationType.DELETE, 'reset');
     return { deletedOrders: 0, deletedPayments: 0 };
+  }
+}
+
+/**
+ * Clean app and keep ONLY Dona Francisca as reseller client.
+ * Wipes out all test orders, payments, audit logs, and any other test clients.
+ * Guarantees Dona Francisca exists with R$ 0,00 balance and the next order will be Pedido #01.
+ */
+export async function cleanAppKeepOnlyFrancisca(): Promise<{
+  deletedOrders: number;
+  deletedPayments: number;
+  deletedUsers: number;
+  franciscaUid: string;
+}> {
+  try {
+    let deletedOrders = 0;
+    let deletedPayments = 0;
+    let deletedUsers = 0;
+
+    // 1. Delete all orders (so all balances become 0,00)
+    const ordersSnap = await getDocs(collection(db, 'orders'));
+    for (const d of ordersSnap.docs) {
+      await deleteDoc(doc(db, 'orders', d.id));
+      deletedOrders++;
+    }
+
+    // 2. Delete all payments
+    const paymentsSnap = await getDocs(collection(db, 'payments'));
+    for (const d of paymentsSnap.docs) {
+      await deleteDoc(doc(db, 'payments', d.id));
+      deletedPayments++;
+    }
+
+    // 3. Delete all audit logs
+    const auditSnap = await getDocs(collection(db, 'audit_logs'));
+    for (const d of auditSnap.docs) {
+      await deleteDoc(doc(db, 'audit_logs', d.id));
+    }
+
+    // 4. Inspect users: find or create Dona Francisca, delete any other fictitious clients
+    const usersSnap = await getDocs(collection(db, 'users'));
+    let franciscaDoc = usersSnap.docs.find((d) => {
+      const data = d.data();
+      const name = (data.displayName || '').toLowerCase();
+      const user = (data.username || '').toLowerCase();
+      return name.includes('francisca') || user.includes('francisca');
+    });
+
+    let franciscaUid = '';
+
+    if (franciscaDoc) {
+      franciscaUid = franciscaDoc.id;
+      // Ensure clean and verified profile for Dona Francisca
+      await updateDoc(doc(db, 'users', franciscaUid), {
+        displayName: 'Dona Francisca',
+        username: franciscaDoc.data().username || 'francisca',
+        simplePasswordHint: franciscaDoc.data().simplePasswordHint || '123456',
+        role: 'revendedor',
+        clientType: 'revendedor',
+        active: true,
+        updatedAt: new Date().toISOString(),
+      });
+    } else {
+      // Create Dona Francisca profile
+      franciscaUid = 'revendedor_francisca';
+      await setDoc(doc(db, 'users', franciscaUid), {
+        uid: franciscaUid,
+        displayName: 'Dona Francisca',
+        username: 'francisca',
+        simplePasswordHint: '123456',
+        email: 'francisca@morumbi.app',
+        phone: '',
+        role: 'revendedor',
+        clientType: 'revendedor',
+        active: true,
+        createdAt: new Date().toISOString(),
+        notificationPreference: 'both',
+      });
+    }
+
+    // 5. Delete all other test clients (protecting admin and Dona Francisca)
+    for (const d of usersSnap.docs) {
+      const data = d.data();
+      const isAdm = data.role === 'admin' || (data.email && data.email.includes('wiliamedfprofessor'));
+      const isFrancisca = d.id === franciscaUid;
+
+      if (!isAdm && !isFrancisca) {
+        await deleteDoc(doc(db, 'users', d.id));
+        deletedUsers++;
+      }
+    }
+
+    return { deletedOrders, deletedPayments, deletedUsers, franciscaUid };
+  } catch (error) {
+    handleFirestoreError(error, OperationType.DELETE, 'cleanAppKeepOnlyFrancisca');
+    return { deletedOrders: 0, deletedPayments: 0, deletedUsers: 0, franciscaUid: '' };
   }
 }

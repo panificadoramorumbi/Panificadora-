@@ -19,6 +19,7 @@ import {
   Tag,
   DollarSign,
   TrendingUp,
+  UserCog,
 } from 'lucide-react';
 import { useAuth } from '../context/AuthContext';
 import { UserProfile } from '../types';
@@ -32,9 +33,10 @@ export type AdminView =
   | 'audit'
   | 'settlement'
   | 'notifications'
+  | 'profile'
   | 'settings';
 
-export type ResellerView = 'orders' | 'leftovers' | 'financial' | 'profit' | 'notifications';
+export type ResellerView = 'orders' | 'leftovers' | 'financial' | 'profit' | 'notifications' | 'profile';
 
 interface SidebarProps {
   isOpen: boolean;
@@ -296,7 +298,25 @@ export const Sidebar: React.FC<SidebarProps> = ({
                 <span>6. Notificações</span>
               </button>
 
-              {/* 7. Mudar Preço dos Pães */}
+              {/* 7. Meus Dados & Senha */}
+              <button
+                onClick={() => handleNavClick('profile')}
+                className={`w-full flex items-center justify-between px-3 py-3 rounded-xl font-bold transition text-left ${
+                  activeView === 'profile'
+                    ? 'bg-amber-500 text-stone-950 shadow-md'
+                    : 'text-stone-200 hover:bg-red-900 hover:text-white'
+                }`}
+              >
+                <div className="flex items-center gap-3">
+                  <UserCog className="w-5 h-5 shrink-0 text-amber-300" />
+                  <span>7. Meus Dados & Senha</span>
+                </div>
+                <span className="text-[10px] font-black uppercase px-2 py-0.5 rounded-full bg-amber-400 text-stone-950">
+                  Perfil
+                </span>
+              </button>
+
+              {/* 8. Configurações & Preços */}
               <button
                 onClick={() => handleNavClick('settings')}
                 className={`w-full flex items-center justify-between px-3 py-3 rounded-xl font-bold transition text-left ${
@@ -307,9 +327,9 @@ export const Sidebar: React.FC<SidebarProps> = ({
               >
                 <div className="flex items-center gap-3">
                   <DollarSign className="w-5 h-5 shrink-0 text-amber-400" />
-                  <span>7. Mudar Preço dos Pães</span>
+                  <span>8. Preços & APK</span>
                 </div>
-                <span className="text-[10px] font-black uppercase px-2 py-0.5 rounded-full bg-amber-400 text-stone-950">
+                <span className="text-[10px] font-black uppercase px-2 py-0.5 rounded-full bg-stone-800 text-amber-400 border border-amber-400/40">
                   R$
                 </span>
               </button>
@@ -380,6 +400,19 @@ export const Sidebar: React.FC<SidebarProps> = ({
               >
                 <Bell className="w-5 h-5 shrink-0" />
                 <span>Notificações</span>
+              </button>
+
+              {/* Meus Dados & Senha (Revendedor) */}
+              <button
+                onClick={() => handleNavClick('profile')}
+                className={`w-full flex items-center gap-3 px-3 py-3 rounded-xl font-bold transition text-left ${
+                  activeView === 'profile'
+                    ? 'bg-amber-500 text-stone-950 shadow-md'
+                    : 'text-stone-200 hover:bg-red-900 hover:text-white'
+                }`}
+              >
+                <UserCog className="w-5 h-5 shrink-0 text-amber-300" />
+                <span>Meus Dados & Senha</span>
               </button>
             </>
           )}

@@ -8,6 +8,8 @@ import {
   sendPasswordResetEmail,
   signInWithPopup,
   GoogleAuthProvider,
+  updatePassword,
+  updateProfile,
 } from 'firebase/auth';
 import {
   doc,
@@ -31,6 +33,8 @@ interface AuthContextType {
     pass: string;
     username?: string;
     email?: string;
+    customPriceSalty?: number;
+    customPriceSweet?: number;
     notificationPreference?: NotificationPreference;
   }) => Promise<void>;
   registerAccount: (data: {
@@ -39,6 +43,14 @@ interface AuthContextType {
     pass: string;
     username?: string;
     email?: string;
+  }) => Promise<void>;
+  updateUserCredentials: (params: {
+    displayName?: string;
+    phone?: string;
+    username?: string;
+    email?: string;
+    newPassword?: string;
+    notificationPreference?: NotificationPreference;
   }) => Promise<void>;
   logout: () => Promise<void>;
   resetPassword: (email: string) => Promise<void>;
@@ -95,6 +107,14 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
           role: isConfiguredAdmin ? 'admin' : (raw.role as UserRole) || 'revendedor',
           clientType: raw.clientType || 'revendedor',
           active: raw.active !== undefined ? raw.active : true,
+          customPriceSalty:
+            raw.customPriceSalty !== undefined && Number(raw.customPriceSalty) > 0
+              ? Number(raw.customPriceSalty)
+              : undefined,
+          customPriceSweet:
+            raw.customPriceSweet !== undefined && Number(raw.customPriceSweet) > 0
+              ? Number(raw.customPriceSweet)
+              : undefined,
           createdAt: raw.createdAt || new Date().toISOString(),
           updatedAt: raw.updatedAt,
           notificationPreference: raw.notificationPreference || 'in_app',
@@ -227,6 +247,8 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
     pass,
     username,
     email,
+    customPriceSalty,
+    customPriceSweet,
     notificationPreference = 'in_app',
   }: {
     displayName: string;
@@ -234,6 +256,8 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
     pass: string;
     username?: string;
     email?: string;
+    customPriceSalty?: number;
+    customPriceSweet?: number;
     notificationPreference?: NotificationPreference;
   }) => {
     try {
@@ -271,6 +295,14 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
         role: 'revendedor',
         clientType: 'revendedor',
         active: true,
+        customPriceSalty:
+          customPriceSalty !== undefined && Number(customPriceSalty) > 0
+            ? Number(customPriceSalty)
+            : undefined,
+        customPriceSweet:
+          customPriceSweet !== undefined && Number(customPriceSweet) > 0
+            ? Number(customPriceSweet)
+            : undefined,
         createdAt: new Date().toISOString(),
         notificationPreference,
       };
@@ -338,6 +370,62 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
     setCurrentUser(userCred.user);
   };
 
+  const updateUserCredentials = async (params: {
+    displayName?: string;
+    phone?: string;
+    username?: string;
+    email?: string;
+    newPassword?: string;
+    notificationPreference?: NotificationPreference;
+  }) => {
+    if (!currentUser) throw new Error('Nenhum usuário conectado.');
+
+    const updates: Partial<UserProfile> = {
+      updatedAt: new Date().toISOString(),
+    };
+
+    if (params.displayName !== undefined) {
+      updates.displayName = params.displayName.trim();
+    }
+    if (params.phone !== undefined) {
+      updates.phone = params.phone.trim();
+    }
+    if (params.username !== undefined) {
+      updates.username = params.username.toLowerCase().replace(/[^a-z0-9._-]/g, '');
+    }
+    if (params.email !== undefined) {
+      updates.email = params.email.trim();
+    }
+    if (params.notificationPreference !== undefined) {
+      updates.notificationPreference = params.notificationPreference;
+    }
+
+    if (params.newPassword && params.newPassword.trim().length >= 6) {
+      updates.simplePasswordHint = params.newPassword.trim();
+      try {
+        await updatePassword(currentUser, params.newPassword.trim());
+      } catch (authErr: any) {
+        console.warn('Senha gravada no perfil; Auth requer novo login se sessão expirada:', authErr);
+      }
+    }
+
+    // Update profile doc in Firestore
+    const userDocRef = doc(db, 'users', currentUser.uid);
+    await updateDoc(userDocRef, updates);
+
+    // Update display name in Auth
+    if (params.displayName) {
+      try {
+        await updateProfile(currentUser, { displayName: params.displayName.trim() });
+      } catch (err) {
+        console.warn('Erro ao atualizar nome no Auth:', err);
+      }
+    }
+
+    // Refresh profile in memory
+    await syncUserProfile(currentUser);
+  };
+
   const logout = async () => {
     try {
       localStorage.removeItem(LOCAL_STORAGE_PROFILE_KEY);
@@ -371,6 +459,7 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
         login,
         registerNewReseller,
         registerAccount,
+        updateUserCredentials,
         logout,
         resetPassword,
         loginWithGoogle,

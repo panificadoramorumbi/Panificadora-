@@ -29,6 +29,10 @@ import {
   KeyRound,
   User,
   Mail,
+  UserCog,
+  Eye,
+  EyeOff,
+  Save,
 } from 'lucide-react';
 import { Order, ProductPrices, PaymentRecord, InAppNotification, NotificationPreference } from '../../types';
 import { formatCurrency, formatDate, formatDateTime, calculateOrderMetrics, formatPhone } from '../../utils/formatters';
@@ -47,8 +51,8 @@ interface ResellerHomeProps {
   payments: PaymentRecord[];
   prices: ProductPrices;
   notifications: InAppNotification[];
-  activeTab: 'orders' | 'leftovers' | 'financial' | 'profit' | 'notifications';
-  setActiveTab: (tab: 'orders' | 'leftovers' | 'financial' | 'profit' | 'notifications') => void;
+  activeTab: 'orders' | 'leftovers' | 'financial' | 'profit' | 'notifications' | 'profile';
+  setActiveTab: (tab: 'orders' | 'leftovers' | 'financial' | 'profit' | 'notifications' | 'profile') => void;
 }
 
 export const ResellerHome: React.FC<ResellerHomeProps> = ({
@@ -59,7 +63,7 @@ export const ResellerHome: React.FC<ResellerHomeProps> = ({
   activeTab,
   setActiveTab,
 }) => {
-  const { currentUser, userProfile, refreshProfile } = useAuth();
+  const { currentUser, userProfile, refreshProfile, updateUserCredentials } = useAuth();
 
   // New Order Modal State
   const [showNewOrderModal, setShowNewOrderModal] = useState(false);
@@ -177,14 +181,29 @@ export const ResellerHome: React.FC<ResellerHomeProps> = ({
 
   // Edit My Profile Modal State (Client can edit their own name, phone, login username, password)
   const [showEditProfileModal, setShowEditProfileModal] = useState(false);
-  const [profileName, setProfileName] = useState('');
-  const [profilePhone, setProfilePhone] = useState('');
-  const [profileUsername, setProfileUsername] = useState('');
-  const [profileEmail, setProfileEmail] = useState('');
-  const [profilePasswordHint, setProfilePasswordHint] = useState('');
+  const [profileName, setProfileName] = useState(userProfile?.displayName || '');
+  const [profilePhone, setProfilePhone] = useState(userProfile?.phone || '');
+  const [profileUsername, setProfileUsername] = useState(
+    userProfile?.username || (userProfile?.email ? userProfile.email.split('@')[0] : '')
+  );
+  const [profileEmail, setProfileEmail] = useState(userProfile?.email || '');
+  const [profilePasswordHint, setProfilePasswordHint] = useState(userProfile?.simplePasswordHint || '123456');
+  const [showProfilePassword, setShowProfilePassword] = useState(false);
   const [isSavingProfile, setIsSavingProfile] = useState(false);
   const [profileSuccessMsg, setProfileSuccessMsg] = useState<string | null>(null);
   const [profileErrorMsg, setProfileErrorMsg] = useState<string | null>(null);
+
+  useEffect(() => {
+    if (userProfile) {
+      setProfileName(userProfile.displayName || '');
+      setProfilePhone(userProfile.phone || '');
+      setProfileUsername(userProfile.username || (userProfile.email ? userProfile.email.split('@')[0] : ''));
+      setProfileEmail(userProfile.email || '');
+      if (userProfile.simplePasswordHint) {
+        setProfilePasswordHint(userProfile.simplePasswordHint);
+      }
+    }
+  }, [userProfile]);
 
   const handleOpenProfileModal = () => {
     setProfileName(userProfile?.displayName || '');
@@ -212,19 +231,18 @@ export const ResellerHome: React.FC<ResellerHomeProps> = ({
     setIsSavingProfile(true);
     setProfileErrorMsg(null);
     try {
-      await updateUserProfile(currentUser.uid, {
+      await updateUserCredentials({
         displayName: profileName.trim(),
         phone: profilePhone.trim(),
         username: profileUsername.trim().toLowerCase().replace(/[^a-z0-9._-]/g, '') || undefined,
         email: profileEmail.trim() || undefined,
-        simplePasswordHint: profilePasswordHint.trim() || undefined,
+        newPassword: profilePasswordHint.trim() || undefined,
       });
-      await refreshProfile();
-      setProfileSuccessMsg('Seus dados foram atualizados com sucesso!');
+      setProfileSuccessMsg('Seus dados e senha foram atualizados com sucesso!');
       setTimeout(() => {
         setShowEditProfileModal(false);
         setProfileSuccessMsg(null);
-      }, 1400);
+      }, 3000);
     } catch (err: any) {
       setProfileErrorMsg('Erro ao atualizar seus dados: ' + (err?.message || err));
     } finally {
@@ -601,6 +619,17 @@ export const ResellerHome: React.FC<ResellerHomeProps> = ({
           }`}
         >
           Notificações
+        </button>
+        <button
+          onClick={() => setActiveTab('profile')}
+          className={`pb-3 px-4 font-black text-xs uppercase transition border-b-2 whitespace-nowrap flex items-center gap-1.5 ${
+            activeTab === 'profile'
+              ? 'border-red-800 text-red-800'
+              : 'border-transparent text-stone-500 hover:text-stone-900'
+          }`}
+        >
+          <UserCog className="w-3.5 h-3.5" />
+          <span>Meus Dados & Senha</span>
         </button>
       </div>
 
@@ -1350,6 +1379,151 @@ export const ResellerHome: React.FC<ResellerHomeProps> = ({
               </div>
             )}
           </div>
+        </div>
+      )}
+
+      {/* TAB CONTENT 5: MEUS DADOS & SENHA (PERFIL DO CLIENTE) */}
+      {activeTab === 'profile' && (
+        <div className="bg-white rounded-3xl p-6 sm:p-7 shadow-sm border border-stone-200 max-w-2xl space-y-5">
+          <div className="flex items-center gap-2.5 pb-4 border-b border-stone-100">
+            <div className="w-11 h-11 rounded-2xl bg-red-800 text-amber-300 flex items-center justify-center font-black shadow-md">
+              <UserCog className="w-6 h-6" />
+            </div>
+            <div>
+              <h3 className="text-base font-black text-stone-900">
+                Meus Dados Pessoais & Senha de Acesso
+              </h3>
+              <p className="text-xs text-stone-500">
+                Altere seu nome completo, WhatsApp, nome de usuário e senha de login
+              </p>
+            </div>
+          </div>
+
+          {profileSuccessMsg && (
+            <div className="p-3.5 rounded-2xl bg-emerald-50 border border-emerald-200 text-xs text-emerald-800 font-bold flex items-center gap-2">
+              <CheckCircle2 className="w-4 h-4 text-emerald-600 shrink-0" />
+              <span>{profileSuccessMsg}</span>
+            </div>
+          )}
+
+          {profileErrorMsg && (
+            <div className="p-3.5 rounded-2xl bg-rose-50 border border-rose-200 text-xs text-rose-800 font-bold flex items-center gap-2">
+              <AlertCircle className="w-4 h-4 text-rose-600 shrink-0" />
+              <span>{profileErrorMsg}</span>
+            </div>
+          )}
+
+          <form onSubmit={handleSaveMyProfile} className="space-y-4">
+            {/* Display Name */}
+            <div>
+              <label className="block text-xs font-bold text-stone-700 uppercase mb-1">
+                Nome Completo *
+              </label>
+              <div className="relative">
+                <User className="w-4 h-4 text-stone-400 absolute left-3.5 top-3" />
+                <input
+                  type="text"
+                  required
+                  value={profileName}
+                  onChange={(e) => setProfileName(e.target.value)}
+                  placeholder="Ex: Dona Francisca"
+                  className="w-full pl-10 pr-3.5 py-2.5 bg-stone-50 border border-stone-300 rounded-xl text-xs font-bold text-stone-900 focus:outline-hidden focus:ring-2 focus:ring-amber-500"
+                />
+              </div>
+            </div>
+
+            {/* Phone / WhatsApp */}
+            <div>
+              <label className="block text-xs font-bold text-stone-700 uppercase mb-1">
+                WhatsApp / Celular *
+              </label>
+              <div className="relative">
+                <Phone className="w-4 h-4 text-stone-400 absolute left-3.5 top-3" />
+                <input
+                  type="text"
+                  required
+                  value={profilePhone}
+                  onChange={(e) => setProfilePhone(e.target.value)}
+                  placeholder="Ex: (11) 99999-9999"
+                  className="w-full pl-10 pr-3.5 py-2.5 bg-stone-50 border border-stone-300 rounded-xl text-xs font-bold text-stone-900 focus:outline-hidden focus:ring-2 focus:ring-amber-500"
+                />
+              </div>
+            </div>
+
+            {/* Username */}
+            <div>
+              <label className="block text-xs font-bold text-stone-700 uppercase mb-1">
+                Nome de Usuário (para entrar no aplicativo)
+              </label>
+              <input
+                type="text"
+                value={profileUsername}
+                onChange={(e) => setProfileUsername(e.target.value.toLowerCase().replace(/[^a-z0-9._-]/g, ''))}
+                placeholder="Ex: francisca"
+                className="w-full px-3.5 py-2.5 bg-stone-50 border border-stone-300 rounded-xl text-xs font-bold text-stone-900 focus:outline-hidden focus:ring-2 focus:ring-amber-500"
+              />
+              <p className="text-[10px] text-stone-500 mt-1">
+                Você pode digitar apenas este nome de usuário na tela de login.
+              </p>
+            </div>
+
+            {/* Simple Password */}
+            <div>
+              <label className="block text-xs font-bold text-stone-700 uppercase mb-1">
+                Sua Senha de Acesso *
+              </label>
+              <div className="relative">
+                <KeyRound className="w-4 h-4 text-stone-400 absolute left-3.5 top-3" />
+                <input
+                  type={showProfilePassword ? 'text' : 'password'}
+                  required
+                  minLength={6}
+                  value={profilePasswordHint}
+                  onChange={(e) => setProfilePasswordHint(e.target.value)}
+                  placeholder="Mínimo 6 dígitos (ex: 123456)"
+                  className="w-full pl-10 pr-10 py-2.5 bg-stone-50 border border-stone-300 rounded-xl text-xs font-bold text-stone-900 focus:outline-hidden focus:ring-2 focus:ring-amber-500"
+                />
+                <button
+                  type="button"
+                  onClick={() => setShowProfilePassword(!showProfilePassword)}
+                  className="absolute right-3 top-2.5 text-stone-400 hover:text-stone-700"
+                >
+                  {showProfilePassword ? <EyeOff className="w-4 h-4" /> : <Eye className="w-4 h-4" />}
+                </button>
+              </div>
+              <p className="text-[10px] text-stone-500 mt-1">
+                Senha simples para entrar no aplicativo.
+              </p>
+            </div>
+
+            {/* Email (Optional) */}
+            <div>
+              <label className="block text-xs font-bold text-stone-700 uppercase mb-1">
+                E-mail (Opcional)
+              </label>
+              <div className="relative">
+                <Mail className="w-4 h-4 text-stone-400 absolute left-3.5 top-3" />
+                <input
+                  type="email"
+                  value={profileEmail}
+                  onChange={(e) => setProfileEmail(e.target.value)}
+                  placeholder="seuemail@exemplo.com"
+                  className="w-full pl-10 pr-3.5 py-2.5 bg-stone-50 border border-stone-300 rounded-xl text-xs font-bold text-stone-900 focus:outline-hidden focus:ring-2 focus:ring-amber-500"
+                />
+              </div>
+            </div>
+
+            <div className="pt-2">
+              <button
+                type="submit"
+                disabled={isSavingProfile}
+                className="w-full py-3 bg-red-800 hover:bg-red-900 text-white font-black text-xs uppercase rounded-xl shadow-md transition flex items-center justify-center gap-2 disabled:opacity-50"
+              >
+                <Save className="w-4 h-4 text-amber-300" />
+                <span>{isSavingProfile ? 'Salvando...' : 'Salvar Meus Dados & Senha'}</span>
+              </button>
+            </div>
+          </form>
         </div>
       )}
 

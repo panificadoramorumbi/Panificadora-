@@ -12,6 +12,8 @@ export interface UserProfile {
   phone: string;
   role: UserRole;
   clientType?: ClientType; // 'revendedor' (preço de atacado com sobras) ou 'consumidor_final' (R$ 1,00 encomendas)
+  customPriceSalty?: number; // Preço fixo personalizado por unidade (ex: 0.70 ou 0.85)
+  customPriceSweet?: number; // Preço fixo personalizado doce (ex: 1.25)
   active: boolean;
   createdAt: string;
   updatedAt?: string;

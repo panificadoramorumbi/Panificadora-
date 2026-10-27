@@ -45,6 +45,7 @@ import {
   sendNotification,
   cleanupOrphanedHistory,
   resetAllHistoricalData,
+  cleanAppKeepOnlyFrancisca,
   DEFAULT_PRICES,
 } from '../../services/dataService';
 import { useAuth } from '../../context/AuthContext';
@@ -565,14 +566,19 @@ Para acessar:
     }
   };
 
-  // Run cleanup of orphaned records or reset all test data
-  const handleRunCleanup = async (type: 'orphans' | 'all') => {
+  // Run cleanup of orphaned records, reset all test data, or keep only Dona Francisca
+  const handleRunCleanup = async (type: 'orphans' | 'all' | 'francisca_only') => {
     setIsCleaningUp(true);
     try {
       if (type === 'orphans') {
         const res = await cleanupOrphanedHistory();
         setCleanupMessage(
           `Limpeza concluída! Foram removidos ${res.deletedOrders} pedido(s) e ${res.deletedPayments} pagamento(s) de clientes que já tinham sido excluídos.`
+        );
+      } else if (type === 'francisca_only') {
+        const res = await cleanAppKeepOnlyFrancisca();
+        setCleanupMessage(
+          `Sucesso! Foram apagados ${res.deletedOrders} pedidos e ${res.deletedPayments} pagamentos. Todos os clientes fictícios foram removidos e apenas a Dona Francisca foi mantida como revendedora com saldo R$ 0,00.`
         );
       } else {
         const res = await resetAllHistoricalData();
@@ -2241,6 +2247,37 @@ Para acessar:
                   >
                     <Trash2 className="w-3.5 h-3.5" />
                     <span>{isCleaningUp ? 'Zerando histórico...' : 'Zerar Todos os Pedidos e Saldos de Teste'}</span>
+                  </button>
+                </div>
+              </div>
+
+              {/* Option 3: Keep ONLY Dona Francisca and zero all values */}
+              <div className="p-4 rounded-2xl border-2 border-amber-400 bg-amber-50/70 space-y-2">
+                <div className="flex items-center justify-between">
+                  <h4 className="font-black text-amber-950 text-xs uppercase flex items-center gap-1.5">
+                    <Sparkles className="w-4 h-4 text-amber-600" />
+                    <span>3. Deixar Apenas Dona Francisca & Zerar Tudo</span>
+                  </h4>
+                  <span className="text-[10px] font-black text-amber-950 bg-amber-200 px-2 py-0.5 rounded-full">
+                    Recomendado
+                  </span>
+                </div>
+                <p className="text-stone-700 leading-relaxed text-[11px]">
+                  Apaga todos os pedidos e pagamentos de teste, remove clientes fictícios de teste e deixa apenas o cadastro da <strong>Dona Francisca</strong> com saldo R$ 0,00 para começar as vendas reais pelo <strong>Pedido #01</strong>.
+                </p>
+                <div className="pt-2">
+                  <button
+                    type="button"
+                    disabled={isCleaningUp}
+                    onClick={() => {
+                      if (window.confirm('Confirmação: Deseja apagar todos os testes, remover clientes fictícios e deixar apenas a Dona Francisca como cliente com saldo R$ 0,00? O próximo pedido será o #01.')) {
+                        handleRunCleanup('francisca_only');
+                      }
+                    }}
+                    className="w-full py-2.5 bg-red-800 hover:bg-red-900 text-white font-black text-xs uppercase rounded-xl shadow-md transition flex items-center justify-center gap-2 disabled:opacity-50 cursor-pointer"
+                  >
+                    <Trash2 className="w-3.5 h-3.5 text-amber-300" />
+                    <span>{isCleaningUp ? 'Executando limpeza...' : 'Zerar Valores e Manter Apenas Dona Francisca'}</span>
                   </button>
                 </div>
               </div>

@@ -20,6 +20,7 @@ import {
   X,
   AlertCircle,
   CheckCircle,
+  Trash2,
 } from 'lucide-react';
 import { Order, UserProfile, PaymentRecord } from '../../types';
 import { formatCurrency, formatDate, buildWhatsAppLink } from '../../utils/formatters';
@@ -228,6 +229,15 @@ Abra pelo navegador do celular e clique em "Instalar Aplicativo" para salvar na 
             <span>Mudar Preço dos Pães</span>
           </button>
 
+          <button
+            onClick={() => onNavigate('settings')}
+            className="px-3 py-2 rounded-xl bg-stone-900 hover:bg-stone-800 active:scale-95 text-white font-bold text-xs flex items-center gap-1.5 shadow-sm transition cursor-pointer border border-stone-700"
+            title="Acessar limpeza de testes e manter apenas Dona Francisca"
+          >
+            <Trash2 className="w-3.5 h-3.5 text-amber-300" />
+            <span>Zerar Valores</span>
+          </button>
+
           <div className="inline-flex p-1 bg-stone-100 rounded-2xl border border-stone-200">
             <button
               onClick={() => setPeriod('today')}
@@ -268,51 +278,6 @@ Abra pelo navegador do celular e clique em "Instalar Aplicativo" para salvar na 
               }`}
             >
               Todos
-            </button>
-          </div>
-        </div>
-      </div>
-
-      {/* Public Shareable Link for Customers & Resellers (ais-pre URL) */}
-      <div className="bg-gradient-to-r from-red-950 via-stone-900 to-red-950 text-white rounded-3xl p-5 sm:p-6 shadow-xl border border-red-800">
-        <div className="flex flex-col lg:flex-row lg:items-center justify-between gap-4">
-          <div className="space-y-1">
-            <div className="flex items-center gap-2">
-              <span className="w-2.5 h-2.5 rounded-full bg-emerald-400 animate-pulse" />
-              <h3 className="text-sm font-black text-amber-300 uppercase tracking-wider">
-                Link Oficial para Clientes e Revendedores Acessarem
-              </h3>
-            </div>
-            <p className="text-xs text-stone-300">
-              Envie este link para qualquer pessoa acessar no celular. Ele funciona publicamente em qualquer aparelho:
-            </p>
-            <div className="flex items-center gap-2 pt-1 font-mono text-xs bg-black/40 px-3 py-2 rounded-xl border border-white/10 text-amber-200 select-all max-w-xl truncate">
-              <Globe className="w-4 h-4 shrink-0 text-amber-400" />
-              <span className="truncate">{publicUrl}</span>
-            </div>
-          </div>
-
-          <div className="flex flex-wrap items-center gap-2 shrink-0">
-            <button
-              type="button"
-              onClick={handleCopyPublicLink}
-              className={`px-4 py-2.5 rounded-xl font-bold text-xs uppercase tracking-wider transition flex items-center gap-2 shadow-md ${
-                copiedLink
-                  ? 'bg-emerald-500 text-white'
-                  : 'bg-white hover:bg-stone-100 text-stone-900'
-              }`}
-            >
-              {copiedLink ? <Check className="w-4 h-4" /> : <Copy className="w-4 h-4" />}
-              <span>{copiedLink ? 'Link Copiado!' : 'Copiar Link'}</span>
-            </button>
-
-            <button
-              type="button"
-              onClick={handleShareWhatsApp}
-              className="px-4 py-2.5 bg-emerald-600 hover:bg-emerald-500 text-white rounded-xl font-black text-xs uppercase tracking-wider transition flex items-center gap-2 shadow-md"
-            >
-              <Share2 className="w-4 h-4" />
-              <span>Enviar no WhatsApp</span>
             </button>
           </div>
         </div>

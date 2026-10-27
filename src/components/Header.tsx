@@ -8,6 +8,7 @@ interface HeaderProps {
   setSidebarOpen: (open: boolean) => void;
   unreadCount?: number;
   onOpenNotifications?: () => void;
+  onOpenProfile?: () => void;
   onGoHome?: () => void;
 }
 
@@ -16,6 +17,7 @@ export const Header: React.FC<HeaderProps> = ({
   setSidebarOpen,
   unreadCount = 0,
   onOpenNotifications,
+  onOpenProfile,
   onGoHome,
 }) => {
   const { userProfile, isAdmin, logout } = useAuth();
@@ -60,10 +62,8 @@ export const Header: React.FC<HeaderProps> = ({
           </div>
 
           {/* Right: Actions, PWA Button, User Info */}
-          <div className="flex items-center gap-2 sm:gap-4">
-            <div className="hidden md:block">
-              <PWAInstallButton />
-            </div>
+          <div className="flex items-center gap-1.5 sm:gap-4">
+            <PWAInstallButton compactOnMobile />
 
             {/* Notification Bell */}
             {onOpenNotifications && (
@@ -81,20 +81,25 @@ export const Header: React.FC<HeaderProps> = ({
               </button>
             )}
 
-            {/* User Chip */}
-            <div className="hidden lg:flex items-center gap-2 pl-2 border-l border-red-800">
+            {/* User Chip - Clickable to open Profile & Password */}
+            <button
+              type="button"
+              onClick={onOpenProfile}
+              className="hidden lg:flex items-center gap-2 pl-2 pr-1 py-1 rounded-xl hover:bg-red-950/50 transition cursor-pointer border-l border-red-800 text-left group"
+              title="Clique para editar seus dados e senha"
+            >
               <div className="text-right">
-                <p className="text-xs font-bold text-white truncate max-w-[140px]">
+                <p className="text-xs font-bold text-white truncate max-w-[140px] group-hover:text-amber-200">
                   {userProfile?.displayName || 'Usuário'}
                 </p>
                 <p className="text-[10px] text-amber-300 capitalize">
-                  {isAdmin ? 'Administrador' : 'Revendedor'}
+                  {isAdmin ? 'Administrador' : 'Revendedor'} • Dados
                 </p>
               </div>
-              <div className="w-8 h-8 rounded-full bg-amber-400 text-stone-950 font-black text-xs flex items-center justify-center shadow">
+              <div className="w-8 h-8 rounded-full bg-amber-400 text-stone-950 font-black text-xs flex items-center justify-center shadow group-hover:scale-105 transition">
                 {userProfile?.displayName?.charAt(0).toUpperCase() || 'U'}
               </div>
-            </div>
+            </button>
 
             {/* Logout icon */}
             <button

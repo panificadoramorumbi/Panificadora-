@@ -31,6 +31,7 @@ import {
   createOrder,
   recordLeftovers,
   sendNotification,
+  updateUserProfile,
   DEFAULT_PRICES,
 } from '../../services/dataService';
 import { useAuth } from '../../context/AuthContext';
@@ -75,6 +76,9 @@ export const OrdersView: React.FC<OrdersViewProps> = ({
   });
   const [newQtySalty, setNewQtySalty] = useState<number | string>(50);
   const [newQtySweet, setNewQtySweet] = useState<number | string>(0);
+  const [orderUnitPriceSalty, setOrderUnitPriceSalty] = useState<number | string>('');
+  const [orderUnitPriceSweet, setOrderUnitPriceSweet] = useState<number | string>('');
+  const [fixPriceForClient, setFixPriceForClient] = useState<boolean>(false);
   const [newOrderNotes, setNewOrderNotes] = useState('');
   const [isSubmittingOrder, setIsSubmittingOrder] = useState(false);
   const [orderModalSuccess, setOrderModalSuccess] = useState<string | null>(null);
@@ -82,6 +86,21 @@ export const OrdersView: React.FC<OrdersViewProps> = ({
   const resellers = useMemo(() => {
     return clients.filter((c) => c.role === 'revendedor');
   }, [clients]);
+
+  // Sync default prices when selected reseller changes in new order modal
+  useEffect(() => {
+    if (!selectedResellerId) {
+      setOrderUnitPriceSalty(prices?.priceSalty ?? DEFAULT_PRICES.priceSalty);
+      setOrderUnitPriceSweet(prices?.priceSweet ?? DEFAULT_PRICES.priceSweet);
+      return;
+    }
+    const res = resellers.find((r) => r.uid === selectedResellerId);
+    if (res) {
+      setOrderUnitPriceSalty(res.customPriceSalty ?? (prices?.priceSalty ?? DEFAULT_PRICES.priceSalty));
+      setOrderUnitPriceSweet(res.customPriceSweet ?? (prices?.priceSweet ?? DEFAULT_PRICES.priceSweet));
+      setFixPriceForClient(false);
+    }
+  }, [selectedResellerId, resellers, prices]);
 
   // Today & Tomorrow string dates for quick filter
   const todayStr = useMemo(() => new Date().toISOString().split('T')[0], []);
@@ -275,8 +294,18 @@ _Panificadora Morumbi — Sistema de Revenda_`;
       return;
     }
 
+    const saltyPriceNum = Number(orderUnitPriceSalty) || (prices?.priceSalty ?? DEFAULT_PRICES.priceSalty);
+    const sweetPriceNum = Number(orderUnitPriceSweet) || (prices?.priceSweet ?? DEFAULT_PRICES.priceSweet);
+
     setIsSubmittingOrder(true);
     try {
+      if (fixPriceForClient) {
+        await updateUserProfile(reseller.uid, {
+          customPriceSalty: saltyPriceNum,
+          customPriceSweet: sweetPriceNum,
+        });
+      }
+
       await createOrder({
         resellerId: reseller.uid,
         resellerName: reseller.displayName,
@@ -284,6 +313,8 @@ _Panificadora Morumbi — Sistema de Revenda_`;
         deliveryDate: newDeliveryDate || tomorrowStr,
         qtySaltyPickup: sQty,
         qtySweetPickup: wQty,
+        unitPriceSalty: saltyPriceNum,
+        unitPriceSweet: sweetPriceNum,
         notes: newOrderNotes
           ? `[Lançado pelo Patrão/Admin]: ${newOrderNotes}`
           : '[Lançado pelo Patrão/Admin]',
@@ -1069,6 +1100,73 @@ _Panificadora Morumbi — Sistema de Revenda_`;
                 </div>
               </div>
 
+              {/* Unit Price per Bread (Editable per order & Option to fix for client) */}
+              <div className="p-3.5 bg-amber-50/80 border border-amber-200 rounded-2xl space-y-2.5">
+                <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-1">
+                  <span className="text-xs font-black text-amber-950 flex items-center gap-1.5">
+                    <DollarSign className="w-4 h-4 text-amber-700" />
+                    Valor Unitário deste Pedido (Personalizável)
+                  </span>
+                  {selectedResellerId && resellers.find((r) => r.uid === selectedResellerId)?.customPriceSalty && (
+                    <span className="text-[10px] bg-emerald-100 text-emerald-800 font-extrabold px-2 py-0.5 rounded-full inline-flex items-center gap-1 self-start sm:self-auto">
+                      ⭐ Preço Fixo Especial deste Cliente
+                    </span>
+                  )}
+                </div>
+
+                <div className="grid grid-cols-1 sm:grid-cols-2 gap-2.5">
+                  <div>
+                    <label className="block text-[11px] font-bold text-stone-700 mb-1">
+                      Valor Pão Salgado (R$/un)
+                    </label>
+                    <input
+                      type="number"
+                      step="0.01"
+                      min="0.01"
+                      value={orderUnitPriceSalty}
+                      onChange={(e) => setOrderUnitPriceSalty(e.target.value)}
+                      placeholder={String(prices?.priceSalty ?? DEFAULT_PRICES.priceSalty)}
+                      className="w-full px-3 py-2 bg-white border border-stone-300 rounded-xl text-xs font-black text-stone-900 focus:outline-hidden focus:ring-2 focus:ring-amber-500 font-mono"
+                    />
+                    <p className="text-[10px] text-stone-500 mt-0.5">
+                      Padrão da padaria: {formatCurrency(prices?.priceSalty ?? DEFAULT_PRICES.priceSalty)} (ex: 0.70 ou 0.85)
+                    </p>
+                  </div>
+
+                  <div>
+                    <label className="block text-[11px] font-bold text-stone-700 mb-1">
+                      Valor Pão Doce (R$/un)
+                    </label>
+                    <input
+                      type="number"
+                      step="0.01"
+                      min="0.01"
+                      value={orderUnitPriceSweet}
+                      onChange={(e) => setOrderUnitPriceSweet(e.target.value)}
+                      placeholder={String(prices?.priceSweet ?? DEFAULT_PRICES.priceSweet)}
+                      className="w-full px-3 py-2 bg-white border border-stone-300 rounded-xl text-xs font-black text-stone-900 focus:outline-hidden focus:ring-2 focus:ring-amber-500 font-mono"
+                    />
+                    <p className="text-[10px] text-stone-500 mt-0.5">
+                      Padrão da padaria: {formatCurrency(prices?.priceSweet ?? DEFAULT_PRICES.priceSweet)}
+                    </p>
+                  </div>
+                </div>
+
+                {selectedResellerId && (
+                  <label className="flex items-center gap-2 pt-1 cursor-pointer select-none border-t border-amber-200/60 mt-1">
+                    <input
+                      type="checkbox"
+                      checked={fixPriceForClient}
+                      onChange={(e) => setFixPriceForClient(e.target.checked)}
+                      className="w-4 h-4 rounded text-amber-600 focus:ring-amber-500 border-stone-300"
+                    />
+                    <span className="text-xs font-bold text-stone-800">
+                      Fixar este valor como padrão para este cliente daqui em diante
+                    </span>
+                  </label>
+                )}
+              </div>
+
               {/* Quantities */}
               <div className="grid grid-cols-1 sm:grid-cols-2 gap-3 pt-1">
                 {/* Salty */}
@@ -1076,7 +1174,7 @@ _Panificadora Morumbi — Sistema de Revenda_`;
                   <div className="flex items-center justify-between mb-1.5">
                     <span className="text-xs font-bold text-stone-800">Pão Salgado (Francês)</span>
                     <span className="text-[10px] font-extrabold text-amber-800">
-                      {formatCurrency(prices?.priceSalty ?? DEFAULT_PRICES.priceSalty)} / un
+                      {formatCurrency(Number(orderUnitPriceSalty) || (prices?.priceSalty ?? DEFAULT_PRICES.priceSalty))} / un
                     </span>
                   </div>
                   <input
@@ -1114,7 +1212,7 @@ _Panificadora Morumbi — Sistema de Revenda_`;
                   <div className="flex items-center justify-between mb-1.5">
                     <span className="text-xs font-bold text-stone-800">Pão Doce</span>
                     <span className="text-[10px] font-extrabold text-amber-800">
-                      {formatCurrency(prices?.priceSweet ?? DEFAULT_PRICES.priceSweet)} / un
+                      {formatCurrency(Number(orderUnitPriceSweet) || (prices?.priceSweet ?? DEFAULT_PRICES.priceSweet))} / un
                     </span>
                   </div>
                   <input
@@ -1155,13 +1253,13 @@ _Panificadora Morumbi — Sistema de Revenda_`;
                     Total Estimado do Pedido
                   </p>
                   <p className="text-xs text-stone-600">
-                    {Number(newQtySalty) || 0} salgados + {Number(newQtySweet) || 0} doces
+                    {Number(newQtySalty) || 0} salgados ({formatCurrency(Number(orderUnitPriceSalty) || (prices?.priceSalty ?? DEFAULT_PRICES.priceSalty))}) + {Number(newQtySweet) || 0} doces ({formatCurrency(Number(orderUnitPriceSweet) || (prices?.priceSweet ?? DEFAULT_PRICES.priceSweet))})
                   </p>
                 </div>
                 <p className="text-xl font-black text-amber-950">
                   {formatCurrency(
-                    (Number(newQtySalty) || 0) * (prices?.priceSalty ?? DEFAULT_PRICES.priceSalty) +
-                      (Number(newQtySweet) || 0) * (prices?.priceSweet ?? DEFAULT_PRICES.priceSweet)
+                    (Number(newQtySalty) || 0) * (Number(orderUnitPriceSalty) || (prices?.priceSalty ?? DEFAULT_PRICES.priceSalty)) +
+                      (Number(newQtySweet) || 0) * (Number(orderUnitPriceSweet) || (prices?.priceSweet ?? DEFAULT_PRICES.priceSweet))
                   )}
                 </p>
               </div>
