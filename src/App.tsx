@@ -20,7 +20,6 @@ import {
   subscribeAuditLogs,
   subscribePrices,
   subscribeNotifications,
-  cleanAppKeepOnlyFrancisca,
   DEFAULT_PRICES,
 } from './services/dataService';
 import {
@@ -136,35 +135,6 @@ const MainApp: React.FC = () => {
     };
   }, [currentUser, isAdmin]);
 
-  // Auto-purge fictitious clients and reset values to zero for Dona Francisca
-  const autoCleanDoneRef = React.useRef(false);
-  useEffect(() => {
-    if (!isAdmin || autoCleanDoneRef.current || clients.length === 0) return;
-
-    const cleanedStored = localStorage.getItem('pm_cleaned_francisca_only_v3');
-    if (cleanedStored === 'true') return;
-
-    // Check if any non-admin client that is not Francisca exists OR if there are any old test orders
-    const fictitiousClients = clients.filter(
-      (c) =>
-        c.role !== 'admin' &&
-        !c.displayName.toLowerCase().includes('francisca') &&
-        !c.username.toLowerCase().includes('francisca')
-    );
-    const hasOldOrders = orders.length > 0;
-
-    if (fictitiousClients.length > 0 || hasOldOrders) {
-      autoCleanDoneRef.current = true;
-      localStorage.setItem('pm_cleaned_francisca_only_v3', 'true');
-      cleanAppKeepOnlyFrancisca()
-        .then((res) => {
-          console.log('Limpeza automática concluída com sucesso:', res);
-        })
-        .catch((err) => {
-          console.error('Erro na limpeza automática:', err);
-        });
-    }
-  }, [isAdmin, clients, orders]);
 
   if (isLoading) {
     return (

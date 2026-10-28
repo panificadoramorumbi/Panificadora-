@@ -37,7 +37,7 @@ service cloud.firestore {
       allow create: if isAdmin() || (isOwner(userId) && request.resource.data.role == 'revendedor');
       allow update: if isAdmin() || (
         isOwner(userId) &&
-        !request.resource.data.diff(resource.data).affectedKeys().hasAny(['role', 'uid', 'email'])
+        !request.resource.data.diff(resource.data).affectedKeys().hasAny(['role', 'uid'])
       );
       allow delete: if isAdmin();
     }

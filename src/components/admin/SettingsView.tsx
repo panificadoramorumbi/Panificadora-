@@ -228,58 +228,58 @@ export const SettingsView: React.FC<SettingsViewProps> = ({ currentPrices, initi
           </div>
         </div>
 
-        {/* Navigation Tabs */}
-        <div className="flex border-b border-stone-200 gap-2 mt-5 overflow-x-auto">
+        {/* Navigation Tabs - Sem arrastar para o lado no celular: todas as 4 abas visíveis */}
+        <div className="grid grid-cols-2 sm:grid-cols-4 gap-2 mt-5 p-1.5 bg-stone-100 rounded-2xl border border-stone-200 sm:border-0 sm:border-b sm:bg-transparent sm:p-0 sm:rounded-none">
           <button
             type="button"
             onClick={() => setActiveTab('dados')}
-            className={`pb-3 px-4 font-black text-xs uppercase transition border-b-2 whitespace-nowrap flex items-center gap-2 ${
+            className={`py-2.5 px-2 rounded-xl text-center font-black text-xs uppercase transition flex items-center justify-center gap-1.5 ${
               activeTab === 'dados'
-                ? 'border-red-800 text-red-800'
-                : 'border-transparent text-stone-500 hover:text-stone-900'
+                ? 'bg-red-800 text-white shadow-xs sm:bg-transparent sm:text-red-800 sm:border-b-2 sm:border-red-800 sm:rounded-none sm:pb-3'
+                : 'text-stone-600 hover:text-stone-900 hover:bg-stone-200/60 sm:hover:bg-transparent sm:text-stone-500'
             }`}
           >
-            <UserCog className="w-4 h-4" />
-            <span>Meus Dados & Senha</span>
+            <UserCog className="w-4 h-4 shrink-0" />
+            <span className="truncate">Meus Dados</span>
           </button>
 
           <button
             type="button"
             onClick={() => setActiveTab('precos')}
-            className={`pb-3 px-4 font-black text-xs uppercase transition border-b-2 whitespace-nowrap flex items-center gap-2 ${
+            className={`py-2.5 px-2 rounded-xl text-center font-black text-xs uppercase transition flex items-center justify-center gap-1.5 ${
               activeTab === 'precos'
-                ? 'border-red-800 text-red-800'
-                : 'border-transparent text-stone-500 hover:text-stone-900'
+                ? 'bg-red-800 text-white shadow-xs sm:bg-transparent sm:text-red-800 sm:border-b-2 sm:border-red-800 sm:rounded-none sm:pb-3'
+                : 'text-stone-600 hover:text-stone-900 hover:bg-stone-200/60 sm:hover:bg-transparent sm:text-stone-500'
             }`}
           >
-            <DollarSign className="w-4 h-4" />
-            <span>Preços dos Pães</span>
+            <DollarSign className="w-4 h-4 shrink-0" />
+            <span className="truncate">Preços Pães</span>
           </button>
 
           <button
             type="button"
             onClick={() => setActiveTab('zerar')}
-            className={`pb-3 px-4 font-black text-xs uppercase transition border-b-2 whitespace-nowrap flex items-center gap-2 ${
+            className={`py-2.5 px-2 rounded-xl text-center font-black text-xs uppercase transition flex items-center justify-center gap-1.5 ${
               activeTab === 'zerar'
-                ? 'border-amber-600 text-amber-900 bg-amber-50/60 rounded-t-xl'
-                : 'border-transparent text-stone-500 hover:text-stone-900'
+                ? 'bg-amber-600 text-white shadow-xs sm:bg-transparent sm:text-amber-900 sm:border-b-2 sm:border-amber-600 sm:rounded-none sm:pb-3'
+                : 'text-stone-600 hover:text-stone-900 hover:bg-stone-200/60 sm:hover:bg-transparent sm:text-stone-500'
             }`}
           >
-            <Trash2 className="w-4 h-4 text-amber-600" />
-            <span>Zerar Valores & Só Dona Francisca</span>
+            <Trash2 className="w-4 h-4 shrink-0" />
+            <span className="truncate">Zerar Valores</span>
           </button>
 
           <button
             type="button"
             onClick={() => setActiveTab('apk')}
-            className={`pb-3 px-4 font-black text-xs uppercase transition border-b-2 whitespace-nowrap flex items-center gap-2 ${
+            className={`py-2.5 px-2 rounded-xl text-center font-black text-xs uppercase transition flex items-center justify-center gap-1.5 ${
               activeTab === 'apk'
-                ? 'border-red-800 text-red-800'
-                : 'border-transparent text-stone-500 hover:text-stone-900'
+                ? 'bg-red-800 text-white shadow-xs sm:bg-transparent sm:text-red-800 sm:border-b-2 sm:border-red-800 sm:rounded-none sm:pb-3'
+                : 'text-stone-600 hover:text-stone-900 hover:bg-stone-200/60 sm:hover:bg-transparent sm:text-stone-500'
             }`}
           >
-            <Smartphone className="w-4 h-4" />
-            <span>APK & Conexão Firebase</span>
+            <Smartphone className="w-4 h-4 shrink-0" />
+            <span className="truncate">APK Android</span>
           </button>
         </div>
       </div>
@@ -648,10 +648,10 @@ export const SettingsView: React.FC<SettingsViewProps> = ({ currentPrices, initi
             <div className="space-y-4 mt-4 text-xs">
               <div className="p-3 bg-white/10 rounded-2xl border border-white/10">
                 <span className="font-bold text-amber-300 text-[10px] uppercase block mb-1">
-                  1. Instalação Imediata no Celular (Sem Loja)
+                  1. Tela Cheia Nativa Imediata (Sem Barra de Navegador)
                 </span>
-                <p className="text-[11px] text-stone-300 mb-2">
-                  Qualquer pessoa com o link oficial pode clicar no botão abaixo para instalar o app na tela inicial:
+                <p className="text-[11px] text-stone-300 mb-2 leading-relaxed">
+                  Ao tocar no botão abaixo no celular (ou no menu do Chrome em "Instalar aplicativo"), o Android instala o app diretamente em <strong>tela cheia nativa</strong>, sem barra de endereço, sem botão X e sem menu de compartilhamento:
                 </p>
                 <PWAInstallButton className="w-full" />
               </div>
@@ -659,14 +659,14 @@ export const SettingsView: React.FC<SettingsViewProps> = ({ currentPrices, initi
               <div className="p-3 bg-white/10 rounded-2xl border border-white/10">
                 <div className="flex items-center justify-between mb-1">
                   <span className="font-bold text-amber-300 text-[10px] uppercase block">
-                    2. Gerador Oficial de APK (PWABuilder)
+                    2. Gerar Novo Arquivo Instalador (.APK) em Tela Cheia
                   </span>
                   <span className="px-2 py-0.5 rounded-full text-[9px] font-black bg-emerald-500 text-white">
-                    100% Gratuito
+                    Modo Standalone Ativo
                   </span>
                 </div>
                 <p className="text-[11px] text-stone-300 mb-2 leading-relaxed">
-                  Gere o arquivo instalador <strong>.apk</strong> com 1 clique através do PWABuilder (ferramenta oficial da Microsoft/Google).
+                  O manifesto e as configurações foram atualizadas para <strong>modo standalone/fullscreen</strong> com assetlinks oficial. Gere o novo pacote .apk pelo PWABuilder ou conversores WebView:
                 </p>
                 <a
                   href={pwaBuilderUrl}
@@ -675,7 +675,7 @@ export const SettingsView: React.FC<SettingsViewProps> = ({ currentPrices, initi
                   className="w-full py-2.5 px-3 bg-amber-400 hover:bg-amber-300 text-stone-950 font-black text-xs uppercase rounded-xl shadow-md transition flex items-center justify-center gap-2"
                 >
                   <Download className="w-4 h-4 text-stone-950" />
-                  <span>Gerar e Baixar Pacote APK Android</span>
+                  <span>Gerar Novo Pacote APK Android</span>
                   <ExternalLink className="w-3.5 h-3.5" />
                 </a>
               </div>

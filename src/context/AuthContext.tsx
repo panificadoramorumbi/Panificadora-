@@ -1,4 +1,5 @@
 import React, { createContext, useContext, useEffect, useState, useTransition } from 'react';
+import { initializeApp } from 'firebase/app';
 import {
   User,
   onAuthStateChanged,
@@ -10,6 +11,7 @@ import {
   GoogleAuthProvider,
   updatePassword,
   updateProfile,
+  getAuth as getSecondaryAuth,
 } from 'firebase/auth';
 import {
   doc,
@@ -18,7 +20,7 @@ import {
   updateDoc,
   onSnapshot,
 } from 'firebase/firestore';
-import { auth, db, handleFirestoreError, OperationType, FIREBASE_INFO } from '../lib/firebase';
+import { auth, db, app, handleFirestoreError, OperationType, FIREBASE_INFO } from '../lib/firebase';
 import { UserProfile, UserRole, NotificationPreference } from '../types';
 
 interface AuthContextType {
@@ -33,6 +35,7 @@ interface AuthContextType {
     pass: string;
     username?: string;
     email?: string;
+    role?: UserRole;
     customPriceSalty?: number;
     customPriceSweet?: number;
     notificationPreference?: NotificationPreference;
@@ -247,6 +250,7 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
     pass,
     username,
     email,
+    role = 'revendedor',
     customPriceSalty,
     customPriceSweet,
     notificationPreference = 'in_app',
@@ -256,16 +260,14 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
     pass: string;
     username?: string;
     email?: string;
+    role?: UserRole;
     customPriceSalty?: number;
     customPriceSweet?: number;
     notificationPreference?: NotificationPreference;
   }) => {
     try {
-      const { initializeApp } = await import('firebase/app');
-      const { getAuth: getSecondaryAuth } = await import('firebase/auth');
-      const config = (await import('../../firebase-applet-config.json')).default;
       const secondaryAppName = `temp-register-${Date.now()}`;
-      const secondaryApp = initializeApp(config, secondaryAppName);
+      const secondaryApp = initializeApp(app.options, secondaryAppName);
       const secondaryAuth = getSecondaryAuth(secondaryApp);
 
       // Generate or clean username (lowercase alphanumeric, dot, dash)
@@ -273,7 +275,8 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
         username && username.trim().length > 0
           ? username.trim()
           : displayName.trim().toLowerCase().split(' ')[0];
-      const cleanUsername = rawUser.toLowerCase().replace(/[^a-z0-9._-]/g, '') || `user${Date.now().toString().slice(-4)}`;
+      const cleanUsername =
+        rawUser.toLowerCase().replace(/[^a-z0-9._-]/g, '') || `user${Date.now().toString().slice(-4)}`;
 
       // Determine Auth Email: if email provided use it, otherwise use username@morumbi.app
       const authEmail =
@@ -285,6 +288,7 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
       const newUid = userCred.user.uid;
 
       // Save user profile in Firestore
+      const targetRole: UserRole = role === 'admin' ? 'admin' : 'revendedor';
       const newProfile: UserProfile = {
         uid: newUid,
         email: authEmail,
@@ -292,7 +296,7 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
         simplePasswordHint: pass,
         displayName: displayName.trim(),
         phone: phone.trim(),
-        role: 'revendedor',
+        role: targetRole,
         clientType: 'revendedor',
         active: true,
         customPriceSalty:
@@ -309,10 +313,23 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
 
       await setDoc(doc(db, 'users', newUid), newProfile);
 
+      // If registered as admin, also register in /admins collection
+      if (targetRole === 'admin') {
+        try {
+          await setDoc(doc(db, 'admins', newUid), {
+            email: authEmail,
+            displayName: displayName.trim(),
+            createdAt: new Date().toISOString(),
+          });
+        } catch (adminErr) {
+          console.warn('Documento admins já gravado ou regras:', adminErr);
+        }
+      }
+
       // Sign out secondary auth and cleanup
       await signOut(secondaryAuth);
     } catch (err: any) {
-      console.error('Falha ao registrar novo revendedor:', err);
+      console.error('Falha ao registrar novo usuário:', err);
       throw err;
     }
   };

@@ -300,6 +300,21 @@ export const ResellerHome: React.FC<ResellerHomeProps> = ({
     };
   }, [myOrders, resalePriceSalty, resalePriceSweet]);
 
+  // Unit prices for this reseller (Custom fixed price set by admin, or default bakery prices)
+  const myUnitPriceSalty =
+    userProfile?.customPriceSalty !== undefined && Number(userProfile.customPriceSalty) > 0
+      ? Number(userProfile.customPriceSalty)
+      : prices.priceSalty;
+
+  const myUnitPriceSweet =
+    userProfile?.customPriceSweet !== undefined && Number(userProfile.customPriceSweet) > 0
+      ? Number(userProfile.customPriceSweet)
+      : prices.priceSweet;
+
+  const hasCustomPrice =
+    (userProfile?.customPriceSalty !== undefined && Number(userProfile.customPriceSalty) > 0) ||
+    (userProfile?.customPriceSweet !== undefined && Number(userProfile.customPriceSweet) > 0);
+
   // Calculated preview for new order modal
   const newOrderPreview = useMemo(() => {
     return calculateOrderMetrics({
@@ -308,10 +323,10 @@ export const ResellerHome: React.FC<ResellerHomeProps> = ({
       qtySaltyLeftover: 0,
       qtySweetLeftover: 0,
       leftoversRecorded: false,
-      unitPriceSalty: prices.priceSalty,
-      unitPriceSweet: prices.priceSweet,
+      unitPriceSalty: myUnitPriceSalty,
+      unitPriceSweet: myUnitPriceSweet,
     });
-  }, [qtySalty, qtySweet, prices]);
+  }, [qtySalty, qtySweet, myUnitPriceSalty, myUnitPriceSweet]);
 
   // Calculated preview for leftovers modal
   const leftoversPreview = useMemo(() => {
@@ -347,6 +362,8 @@ export const ResellerHome: React.FC<ResellerHomeProps> = ({
         deliveryDate,
         qtySaltyPickup: Number(qtySalty),
         qtySweetPickup: Number(qtySweet),
+        unitPriceSalty: myUnitPriceSalty,
+        unitPriceSweet: myUnitPriceSweet,
         notes: orderNotes.trim(),
         currentPrices: prices,
       });
@@ -412,8 +429,22 @@ export const ResellerHome: React.FC<ResellerHomeProps> = ({
             Olá, {userProfile?.displayName || 'Revendedor'}!
           </h2>
           <p className="text-xs text-amber-200 mt-0.5">
-            Faça seus pedidos diários e registre suas sobras com cálculo financeiro automático.
+            Faça seus pedidos diários e acompanhe suas sobras com cálculo financeiro automático.
           </p>
+          <div className="mt-2.5 flex flex-wrap items-center gap-2">
+            <span className="inline-flex items-center gap-1.5 px-3 py-1 bg-amber-400/20 border border-amber-400/40 rounded-xl text-xs font-bold text-amber-200">
+              🥖 Seu Preço Fixo de Compra: Salgado <strong className="text-white">{formatCurrency(myUnitPriceSalty)}</strong> • Doce <strong className="text-white">{formatCurrency(myUnitPriceSweet)}</strong>
+              {hasCustomPrice ? (
+                <span className="text-[10px] bg-amber-400 text-stone-950 font-black px-1.5 py-0.5 rounded-md ml-1">
+                  Preço Especial Fixado
+                </span>
+              ) : (
+                <span className="text-[10px] text-amber-300 font-semibold ml-1">
+                  (Tabela Padrão)
+                </span>
+              )}
+            </span>
+          </div>
         </div>
 
         <div className="flex flex-wrap items-center gap-2.5">
@@ -564,72 +595,84 @@ export const ResellerHome: React.FC<ResellerHomeProps> = ({
         </div>
       )}
 
-      {/* Tabs Menu */}
-      <div className="flex border-b border-stone-200 overflow-x-auto gap-2">
+      {/* Tabs Menu - Sem arrastar para o lado no celular: Todas as opções visíveis em uma tela só */}
+      <div className="grid grid-cols-3 sm:grid-cols-6 gap-1.5 p-1.5 bg-stone-100 rounded-2xl border border-stone-200 sm:border-0 sm:border-b sm:bg-transparent sm:p-0 sm:rounded-none sm:gap-2">
         <button
+          type="button"
           onClick={() => setActiveTab('orders')}
-          className={`pb-3 px-4 font-black text-xs uppercase transition border-b-2 whitespace-nowrap ${
+          className={`py-2.5 px-2 rounded-xl text-center font-black text-[11px] sm:text-xs uppercase transition flex flex-col sm:flex-row items-center justify-center gap-1 ${
             activeTab === 'orders'
-              ? 'border-red-800 text-red-800'
-              : 'border-transparent text-stone-500 hover:text-stone-900'
+              ? 'bg-red-800 text-white shadow-xs sm:bg-transparent sm:text-red-800 sm:border-b-2 sm:border-red-800 sm:rounded-none sm:pb-3'
+              : 'text-stone-600 hover:text-stone-900 hover:bg-stone-200/60 sm:hover:bg-transparent sm:text-stone-500'
           }`}
         >
-          Meus Pedidos ({myOrders.length})
+          <ShoppingBag className="w-4 h-4 shrink-0" />
+          <span className="truncate">Pedidos ({myOrders.length})</span>
         </button>
+
         <button
+          type="button"
           onClick={() => setActiveTab('leftovers')}
-          className={`pb-3 px-4 font-black text-xs uppercase transition border-b-2 whitespace-nowrap ${
+          className={`py-2.5 px-2 rounded-xl text-center font-black text-[11px] sm:text-xs uppercase transition flex flex-col sm:flex-row items-center justify-center gap-1 ${
             activeTab === 'leftovers'
-              ? 'border-red-800 text-red-800'
-              : 'border-transparent text-stone-500 hover:text-stone-900'
+              ? 'bg-red-800 text-white shadow-xs sm:bg-transparent sm:text-red-800 sm:border-b-2 sm:border-red-800 sm:rounded-none sm:pb-3'
+              : 'text-stone-600 hover:text-stone-900 hover:bg-stone-200/60 sm:hover:bg-transparent sm:text-stone-500'
           }`}
         >
-          Registrar Sobras ({ordersAwaitingLeftovers.length})
+          <Croissant className="w-4 h-4 shrink-0" />
+          <span className="truncate">Sobras ({ordersAwaitingLeftovers.length})</span>
         </button>
+
         <button
+          type="button"
           onClick={() => setActiveTab('profit')}
-          className={`pb-3 px-4 font-black text-xs uppercase transition border-b-2 whitespace-nowrap flex items-center gap-1.5 ${
+          className={`py-2.5 px-2 rounded-xl text-center font-black text-[11px] sm:text-xs uppercase transition flex flex-col sm:flex-row items-center justify-center gap-1 ${
             activeTab === 'profit'
-              ? 'border-emerald-600 text-emerald-800'
-              : 'border-transparent text-stone-500 hover:text-stone-900'
+              ? 'bg-emerald-700 text-white shadow-xs sm:bg-transparent sm:text-emerald-800 sm:border-b-2 sm:border-emerald-600 sm:rounded-none sm:pb-3'
+              : 'text-stone-600 hover:text-stone-900 hover:bg-stone-200/60 sm:hover:bg-transparent sm:text-stone-500'
           }`}
         >
-          <TrendingUp className="w-3.5 h-3.5 text-emerald-600" />
-          <span>Meu Lucro</span>
-          <span className="text-[10px] bg-emerald-100 text-emerald-800 font-bold px-1.5 py-0.5 rounded-full">
-            {formatCurrency(profitMetrics.totalNetProfit)}
-          </span>
+          <TrendingUp className="w-4 h-4 shrink-0 text-emerald-600 sm:text-inherit" />
+          <span className="truncate">Meu Lucro</span>
         </button>
+
         <button
+          type="button"
           onClick={() => setActiveTab('financial')}
-          className={`pb-3 px-4 font-black text-xs uppercase transition border-b-2 whitespace-nowrap ${
+          className={`py-2.5 px-2 rounded-xl text-center font-black text-[11px] sm:text-xs uppercase transition flex flex-col sm:flex-row items-center justify-center gap-1 ${
             activeTab === 'financial'
-              ? 'border-red-800 text-red-800'
-              : 'border-transparent text-stone-500 hover:text-stone-900'
+              ? 'bg-red-800 text-white shadow-xs sm:bg-transparent sm:text-red-800 sm:border-b-2 sm:border-red-800 sm:rounded-none sm:pb-3'
+              : 'text-stone-600 hover:text-stone-900 hover:bg-stone-200/60 sm:hover:bg-transparent sm:text-stone-500'
           }`}
         >
-          Extrato Financeiro
+          <Receipt className="w-4 h-4 shrink-0" />
+          <span className="truncate">Extrato</span>
         </button>
+
         <button
+          type="button"
           onClick={() => setActiveTab('notifications')}
-          className={`pb-3 px-4 font-black text-xs uppercase transition border-b-2 whitespace-nowrap ${
+          className={`py-2.5 px-2 rounded-xl text-center font-black text-[11px] sm:text-xs uppercase transition flex flex-col sm:flex-row items-center justify-center gap-1 ${
             activeTab === 'notifications'
-              ? 'border-red-800 text-red-800'
-              : 'border-transparent text-stone-500 hover:text-stone-900'
+              ? 'bg-red-800 text-white shadow-xs sm:bg-transparent sm:text-red-800 sm:border-b-2 sm:border-red-800 sm:rounded-none sm:pb-3'
+              : 'text-stone-600 hover:text-stone-900 hover:bg-stone-200/60 sm:hover:bg-transparent sm:text-stone-500'
           }`}
         >
-          Notificações
+          <Bell className="w-4 h-4 shrink-0" />
+          <span className="truncate">Avisos</span>
         </button>
+
         <button
+          type="button"
           onClick={() => setActiveTab('profile')}
-          className={`pb-3 px-4 font-black text-xs uppercase transition border-b-2 whitespace-nowrap flex items-center gap-1.5 ${
+          className={`py-2.5 px-2 rounded-xl text-center font-black text-[11px] sm:text-xs uppercase transition flex flex-col sm:flex-row items-center justify-center gap-1 ${
             activeTab === 'profile'
-              ? 'border-red-800 text-red-800'
-              : 'border-transparent text-stone-500 hover:text-stone-900'
+              ? 'bg-red-800 text-white shadow-xs sm:bg-transparent sm:text-red-800 sm:border-b-2 sm:border-red-800 sm:rounded-none sm:pb-3'
+              : 'text-stone-600 hover:text-stone-900 hover:bg-stone-200/60 sm:hover:bg-transparent sm:text-stone-500'
           }`}
         >
-          <UserCog className="w-3.5 h-3.5" />
-          <span>Meus Dados & Senha</span>
+          <UserCog className="w-4 h-4 shrink-0" />
+          <span className="truncate">Meus Dados</span>
         </button>
       </div>
 
@@ -1071,7 +1114,7 @@ export const ResellerHome: React.FC<ResellerHomeProps> = ({
 
             {/* Simulation Result */}
             {(() => {
-              const simBakeryCost = simSalty * prices.priceSalty + simSweet * prices.priceSweet;
+              const simBakeryCost = simSalty * myUnitPriceSalty + simSweet * myUnitPriceSweet;
               const simRevenue = simSalty * resalePriceSalty + simSweet * resalePriceSweet;
               const simProfit = simRevenue - simBakeryCost;
               const simMargin = simRevenue > 0 ? (simProfit / simRevenue) * 100 : 0;
@@ -1589,17 +1632,24 @@ export const ResellerHome: React.FC<ResellerHomeProps> = ({
 
                 {/* Quantities */}
                 <div className="p-4 bg-stone-50 rounded-2xl border border-stone-200 space-y-3">
-                  <h4 className="font-black text-stone-900 uppercase text-[11px]">
-                    Quantidades Desejadas
-                  </h4>
+                  <div className="flex items-center justify-between">
+                    <h4 className="font-black text-stone-900 uppercase text-[11px]">
+                      Quantidades Desejadas
+                    </h4>
+                    {hasCustomPrice && (
+                      <span className="text-[10px] bg-amber-400 text-stone-950 font-black px-2 py-0.5 rounded-full border border-amber-500">
+                        Preço Especial Ativo
+                      </span>
+                    )}
+                  </div>
 
                   <div>
                     <div className="flex justify-between items-center mb-1">
                       <label className="font-bold text-stone-700">
                         Pão Salgado (unidades)
                       </label>
-                      <span className="text-[10px] text-stone-500 font-semibold">
-                        Preço: {formatCurrency(prices.priceSalty)} / un
+                      <span className="text-[10px] text-amber-900 font-bold bg-amber-100/70 px-2 py-0.5 rounded-md">
+                        Seu Preço: {formatCurrency(myUnitPriceSalty)} / un
                       </span>
                     </div>
                     <input
@@ -1616,8 +1666,8 @@ export const ResellerHome: React.FC<ResellerHomeProps> = ({
                       <label className="font-bold text-stone-700">
                         Pão Doce (unidades)
                       </label>
-                      <span className="text-[10px] text-stone-500 font-semibold">
-                        Preço: {formatCurrency(prices.priceSweet)} / un
+                      <span className="text-[10px] text-amber-900 font-bold bg-amber-100/70 px-2 py-0.5 rounded-md">
+                        Seu Preço: {formatCurrency(myUnitPriceSweet)} / un
                       </span>
                     </div>
                     <input
@@ -1628,6 +1678,9 @@ export const ResellerHome: React.FC<ResellerHomeProps> = ({
                       className="w-full px-3.5 py-2.5 bg-white border border-stone-300 rounded-xl font-black text-sm text-stone-900"
                     />
                   </div>
+                  <p className="text-[10px] text-stone-500 italic">
+                    * Preços unitários fixados pela padaria para o seu cadastro. Somente o administrador pode alterar.
+                  </p>
                 </div>
 
                 {/* Observações */}
@@ -1714,13 +1767,13 @@ export const ResellerHome: React.FC<ResellerHomeProps> = ({
                     <div className="flex justify-between">
                       <span>Pão Salgado:</span>
                       <span className="font-bold">
-                        {qtySalty} un × {formatCurrency(prices.priceSalty)}
+                        {qtySalty} un × {formatCurrency(myUnitPriceSalty)}
                       </span>
                     </div>
                     <div className="flex justify-between">
                       <span>Pão Doce:</span>
                       <span className="font-bold">
-                        {qtySweet} un × {formatCurrency(prices.priceSweet)}
+                        {qtySweet} un × {formatCurrency(myUnitPriceSweet)}
                       </span>
                     </div>
                     {orderNotes && (

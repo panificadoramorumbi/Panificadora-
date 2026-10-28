@@ -20,7 +20,7 @@ export default defineConfig(() => {
           theme_color: '#991b1b',
           background_color: '#991b1b',
           display: 'standalone',
-          display_override: ['window-controls-overlay', 'standalone', 'fullscreen'],
+          display_override: ['fullscreen', 'standalone'],
           orientation: 'portrait',
           start_url: '/',
           scope: '/',
@@ -47,6 +47,7 @@ export default defineConfig(() => {
         },
         workbox: {
           globPatterns: ['**/*.{js,css,html,ico,png,svg,woff,woff2}'],
+          maximumFileSizeToCacheInBytes: 6 * 1024 * 1024,
         },
         devOptions: {
           enabled: true,

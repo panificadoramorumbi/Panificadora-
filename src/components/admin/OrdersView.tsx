@@ -1,4 +1,4 @@
-import React, { useState, useMemo } from 'react';
+import React, { useState, useMemo, useEffect } from 'react';
 import {
   ShoppingBag,
   Search,
@@ -116,13 +116,17 @@ export const OrdersView: React.FC<OrdersViewProps> = ({
   }, [resellers, clientFilter]);
 
   const filteredOrders = useMemo(() => {
-    return orders.filter((order) => {
+    return (orders || []).filter((order) => {
+      if (!order) return false;
       // Search
-      const term = searchTerm.toLowerCase();
+      const term = (searchTerm || '').toLowerCase();
+      const orderNum = String(order.orderNumber || '').toLowerCase();
+      const resName = String(order.resellerName || '').toLowerCase();
+      const notesStr = String(order.notes || '').toLowerCase();
       const matchesSearch =
-        order.orderNumber.toLowerCase().includes(term) ||
-        order.resellerName.toLowerCase().includes(term) ||
-        (order.notes && order.notes.toLowerCase().includes(term));
+        orderNum.includes(term) ||
+        resName.includes(term) ||
+        notesStr.includes(term);
 
       // Client filter
       const matchesClient =
@@ -137,11 +141,13 @@ export const OrdersView: React.FC<OrdersViewProps> = ({
         paymentFilter === 'all' || order.paymentStatus === paymentFilter;
 
       // Calendar Date filter
+      const orderDelivery = String(order.deliveryDate || '');
+      const orderDateStr = String(order.orderDate || '');
       const matchesDate =
         !dateFilter ||
-        order.deliveryDate === dateFilter ||
-        order.orderDate === dateFilter ||
-        order.orderDate.startsWith(dateFilter);
+        orderDelivery === dateFilter ||
+        orderDateStr === dateFilter ||
+        orderDateStr.startsWith(dateFilter);
 
       return matchesSearch && matchesClient && matchesStatus && matchesPayment && matchesDate;
     });
@@ -155,10 +161,11 @@ export const OrdersView: React.FC<OrdersViewProps> = ({
     let totalValue = 0;
 
     filteredOrders.forEach((o) => {
+      if (!o) return;
       count++;
-      totalSalty += o.qtySaltyPickup || 0;
-      totalSweet += o.qtySweetPickup || 0;
-      totalValue += o.finalTotal || o.expectedTotal || 0;
+      totalSalty += Number(o.qtySaltyPickup) || 0;
+      totalSweet += Number(o.qtySweetPickup) || 0;
+      totalValue += Number(o.finalTotal || o.expectedTotal) || 0;
     });
 
     return { count, totalSalty, totalSweet, totalValue };

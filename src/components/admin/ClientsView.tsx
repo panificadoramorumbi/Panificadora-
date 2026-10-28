@@ -93,6 +93,9 @@ export const ClientsView: React.FC<ClientsViewProps> = ({
   const [editEmail, setEditEmail] = useState('');
   const [editPasswordHint, setEditPasswordHint] = useState('');
   const [editClientType, setEditClientType] = useState<'revendedor' | 'consumidor_final'>('revendedor');
+  const [editRole, setEditRole] = useState<'revendedor' | 'admin'>('revendedor');
+  const [editCustomPriceSalty, setEditCustomPriceSalty] = useState<string>('');
+  const [editCustomPriceSweet, setEditCustomPriceSweet] = useState<string>('');
   const [editNotificationPref, setEditNotificationPref] = useState<NotificationPreference>('both');
   const [isSavingEdit, setIsSavingEdit] = useState(false);
   const [editModalSuccess, setEditModalSuccess] = useState<string | null>(null);
@@ -124,9 +127,21 @@ export const ClientsView: React.FC<ClientsViewProps> = ({
   });
   const [qtySalty, setQtySalty] = useState<number | string>(50);
   const [qtySweet, setQtySweet] = useState<number | string>(0);
+  const [orderUnitPriceSalty, setOrderUnitPriceSalty] = useState<number | string>('');
+  const [orderUnitPriceSweet, setOrderUnitPriceSweet] = useState<number | string>('');
+  const [fixPriceForClient, setFixPriceForClient] = useState<boolean>(false);
   const [orderNotes, setOrderNotes] = useState('');
   const [isCreatingOrder, setIsCreatingOrder] = useState(false);
   const [orderSuccessMsg, setOrderSuccessMsg] = useState<string | null>(null);
+
+  // Sync custom unit prices when clientForOrder changes
+  useEffect(() => {
+    if (clientForOrder) {
+      setOrderUnitPriceSalty(clientForOrder.customPriceSalty ?? (prices?.priceSalty ?? DEFAULT_PRICES.priceSalty));
+      setOrderUnitPriceSweet(clientForOrder.customPriceSweet ?? (prices?.priceSweet ?? DEFAULT_PRICES.priceSweet));
+      setFixPriceForClient(false);
+    }
+  }, [clientForOrder, prices]);
 
   // In-App Notification Modal State (Notify client on app / system notification bar)
   const [clientForNotification, setClientForNotification] = useState<UserProfile | null>(null);
@@ -135,12 +150,15 @@ export const ClientsView: React.FC<ClientsViewProps> = ({
   const [isSendingNotif, setIsSendingNotif] = useState(false);
   const [notifSuccessMsg, setNotifSuccessMsg] = useState<string | null>(null);
 
-  // New reseller form state (simplified without mandatory email)
+  // New user form state (supports both revendedor and administrator)
   const [newName, setNewName] = useState('');
   const [newUsername, setNewUsername] = useState('');
   const [newEmail, setNewEmail] = useState('');
   const [newPhone, setNewPhone] = useState('');
   const [newPassword, setNewPassword] = useState('123456');
+  const [newRole, setNewRole] = useState<'revendedor' | 'admin'>('revendedor');
+  const [newCustomPriceSalty, setNewCustomPriceSalty] = useState<string>('');
+  const [newCustomPriceSweet, setNewCustomPriceSweet] = useState<string>('');
   const [newPref, setNewPref] = useState<NotificationPreference>('both');
   const [isSubmitting, setIsSubmitting] = useState(false);
   const [formError, setFormError] = useState<string | null>(null);
@@ -252,21 +270,31 @@ export const ClientsView: React.FC<ClientsViewProps> = ({
 
     setIsSubmitting(true);
     try {
+      const saltyPrice = newCustomPriceSalty !== '' && Number(newCustomPriceSalty) > 0 ? Number(newCustomPriceSalty) : undefined;
+      const sweetPrice = newCustomPriceSweet !== '' && Number(newCustomPriceSweet) > 0 ? Number(newCustomPriceSweet) : undefined;
+
       await registerNewReseller({
         displayName: newName.trim(),
         username: cleanUsername,
         phone: newPhone.trim(),
         pass: newPassword,
         email: newEmail.trim() || undefined,
+        role: newRole,
+        customPriceSalty: saltyPrice,
+        customPriceSweet: sweetPrice,
         notificationPreference: newPref,
       });
 
-      setFormSuccess(`Revendedor "${cleanUsername}" cadastrado com sucesso!`);
+      const roleLabel = newRole === 'admin' ? 'Administrador' : 'Revendedor';
+      setFormSuccess(`${roleLabel} "${cleanUsername}" cadastrado com sucesso!`);
       setNewName('');
       setNewUsername('');
       setNewEmail('');
       setNewPhone('');
       setNewPassword('123456');
+      setNewRole('revendedor');
+      setNewCustomPriceSalty('');
+      setNewCustomPriceSweet('');
       setNewPref('both');
       setTimeout(() => {
         handleCloseNewModal();
@@ -357,8 +385,20 @@ Para acessar:
       return;
     }
 
+    const saltyPriceNum =
+      Number(orderUnitPriceSalty) || (clientForOrder.customPriceSalty ?? (prices?.priceSalty ?? DEFAULT_PRICES.priceSalty));
+    const sweetPriceNum =
+      Number(orderUnitPriceSweet) || (clientForOrder.customPriceSweet ?? (prices?.priceSweet ?? DEFAULT_PRICES.priceSweet));
+
     setIsCreatingOrder(true);
     try {
+      if (fixPriceForClient) {
+        await updateUserProfile(clientForOrder.uid, {
+          customPriceSalty: saltyPriceNum,
+          customPriceSweet: sweetPriceNum,
+        });
+      }
+
       await createOrder({
         resellerId: clientForOrder.uid,
         resellerName: clientForOrder.displayName,
@@ -366,6 +406,8 @@ Para acessar:
         deliveryDate: deliveryDate || new Date().toISOString().split('T')[0],
         qtySaltyPickup: sQty,
         qtySweetPickup: wQty,
+        unitPriceSalty: saltyPriceNum,
+        unitPriceSweet: sweetPriceNum,
         notes: orderNotes
           ? `[Lançado pela Panificadora]: ${orderNotes}`
           : '[Lançado pela Panificadora]',
@@ -520,6 +562,9 @@ Para acessar:
     setEditEmail(client.email || '');
     setEditPasswordHint(client.simplePasswordHint || '123456');
     setEditClientType(client.clientType || 'revendedor');
+    setEditRole(client.role === 'admin' ? 'admin' : 'revendedor');
+    setEditCustomPriceSalty(client.customPriceSalty !== undefined ? String(client.customPriceSalty) : '');
+    setEditCustomPriceSweet(client.customPriceSweet !== undefined ? String(client.customPriceSweet) : '');
     setEditNotificationPref(client.notificationPreference || 'both');
     setEditModalError(null);
     setEditModalSuccess(null);
@@ -543,17 +588,41 @@ Para acessar:
     setIsSavingEdit(true);
     setEditModalError(null);
     try {
-      await updateUserProfile(editingClient.uid, {
+      const saltyPrice =
+        editCustomPriceSalty !== '' && Number(editCustomPriceSalty) > 0
+          ? Number(editCustomPriceSalty)
+          : null;
+      const sweetPrice =
+        editCustomPriceSweet !== '' && Number(editCustomPriceSweet) > 0
+          ? Number(editCustomPriceSweet)
+          : null;
+
+      const updates: any = {
         displayName: editName.trim(),
         username: editUsername.trim().toLowerCase().replace(/[^a-z0-9._-]/g, ''),
         phone: editPhone.trim(),
         email: editEmail.trim(),
         simplePasswordHint: editPasswordHint.trim() || '123456',
         clientType: editClientType,
+        role: editRole,
         notificationPreference: editNotificationPref,
-      });
+      };
 
-      setEditModalSuccess('Dados do cliente atualizados com sucesso!');
+      if (saltyPrice !== null) {
+        updates.customPriceSalty = saltyPrice;
+      } else {
+        updates.customPriceSalty = null;
+      }
+
+      if (sweetPrice !== null) {
+        updates.customPriceSweet = sweetPrice;
+      } else {
+        updates.customPriceSweet = null;
+      }
+
+      await updateUserProfile(editingClient.uid, updates);
+
+      setEditModalSuccess('Dados e preços do cliente atualizados com sucesso!');
       setTimeout(() => {
         setShowEditModal(false);
         setEditingClient(null);
@@ -711,6 +780,11 @@ Para acessar:
                           </p>
                           <p className="text-[11px] text-stone-500 truncate">
                             {formatPhone(client.phone) || client.email}
+                          </p>
+                          <p className="text-[10px] font-bold text-amber-900 mt-0.5 truncate">
+                            {client.customPriceSalty
+                              ? `⭐ Salg: ${formatCurrency(client.customPriceSalty)} | Doce: ${formatCurrency(client.customPriceSweet ?? (prices?.priceSweet ?? DEFAULT_PRICES.priceSweet))}`
+                              : `🥖 Padrão: ${formatCurrency(prices?.priceSalty ?? DEFAULT_PRICES.priceSalty)}`}
                           </p>
                         </div>
                       </div>
@@ -871,6 +945,40 @@ Para acessar:
                             </button>
                           );
                         })}
+                      </div>
+
+                      {/* Fixed Client Pricing Badge in Dossier */}
+                      <div className="mt-3 pt-3 border-t border-stone-100 flex flex-wrap items-center justify-between gap-2 bg-amber-50/70 p-3 rounded-2xl border border-amber-200">
+                        <div className="flex items-center gap-2">
+                          <DollarSign className="w-4 h-4 text-amber-700 shrink-0" />
+                          <div>
+                            <span className="text-[10px] uppercase font-bold text-amber-900 block">
+                              {selectedClient.customPriceSalty || selectedClient.customPriceSweet
+                                ? '⭐ Preço Fixo Especial deste Cliente'
+                                : '🥖 Preço Padrão da Padaria'}
+                            </span>
+                            <span className="text-xs font-black text-stone-900">
+                              Pão Salgado:{' '}
+                              <strong className="text-amber-900 font-extrabold">
+                                {formatCurrency(selectedClient.customPriceSalty ?? (prices?.priceSalty ?? DEFAULT_PRICES.priceSalty))}
+                              </strong>{' '}
+                              • Pão Doce:{' '}
+                              <strong className="text-amber-900 font-extrabold">
+                                {formatCurrency(selectedClient.customPriceSweet ?? (prices?.priceSweet ?? DEFAULT_PRICES.priceSweet))}
+                              </strong>
+                            </span>
+                          </div>
+                        </div>
+
+                        <button
+                          type="button"
+                          onClick={() => handleOpenEditModal(selectedClient)}
+                          className="px-3 py-1.5 bg-white hover:bg-amber-100 text-amber-950 font-black text-[11px] rounded-xl border border-amber-300 shadow-2xs transition flex items-center gap-1"
+                          title="Alterar valor fixo deste cliente"
+                        >
+                          <Edit2 className="w-3 h-3 text-amber-700" />
+                          <span>Alterar Preço</span>
+                        </button>
                       </div>
                     </div>
                   </div>
@@ -1218,18 +1326,18 @@ Para acessar:
         </div>
       </div>
 
-      {/* Modal: Cadastrar Novo Revendedor */}
+      {/* Modal: Cadastrar Novo Usuário (Revendedor ou Administrador) */}
       {showNewModal && (
-        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 backdrop-blur-xs p-4">
-          <div className="w-full max-w-md bg-white rounded-3xl p-6 sm:p-7 shadow-2xl border border-stone-200">
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 backdrop-blur-xs p-4 overflow-y-auto">
+          <div className="w-full max-w-md bg-white rounded-3xl p-6 sm:p-7 shadow-2xl border border-stone-200 my-8">
             <div className="flex items-center justify-between pb-4 border-b border-stone-100">
               <div className="flex items-center gap-2.5">
                 <div className="w-9 h-9 rounded-xl bg-red-800 text-white flex items-center justify-center font-bold">
-                  <UserPlus className="w-5 h-5" />
+                  <UserPlus className="w-5 h-5 text-amber-300" />
                 </div>
                 <div>
-                  <h3 className="text-base font-black text-stone-900">Novo Revendedor</h3>
-                  <p className="text-xs text-stone-500">Crie o acesso para o cliente no Firebase</p>
+                  <h3 className="text-base font-black text-stone-900">Novo Usuário</h3>
+                  <p className="text-xs text-stone-500">Cadastrar revendedor (cliente) ou administrador</p>
                 </div>
               </div>
               <button
@@ -1255,14 +1363,45 @@ Para acessar:
             )}
 
             <form onSubmit={handleCreateReseller} className="space-y-3.5 mt-4">
+              {/* Role Selection */}
               <div>
                 <label className="block text-xs font-bold text-stone-700 uppercase mb-1">
-                  Nome Completo do Revendedor *
+                  Tipo de Conta / Função *
+                </label>
+                <div className="grid grid-cols-2 gap-2">
+                  <button
+                    type="button"
+                    onClick={() => setNewRole('revendedor')}
+                    className={`py-2 px-3 rounded-xl border text-xs font-black transition flex items-center justify-center gap-1.5 ${
+                      newRole === 'revendedor'
+                        ? 'bg-red-800 text-white border-red-800 shadow-2xs'
+                        : 'bg-stone-50 text-stone-700 border-stone-200 hover:bg-stone-100'
+                    }`}
+                  >
+                    <span>🥖 Revendedor (Cliente)</span>
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => setNewRole('admin')}
+                    className={`py-2 px-3 rounded-xl border text-xs font-black transition flex items-center justify-center gap-1.5 ${
+                      newRole === 'admin'
+                        ? 'bg-amber-500 text-stone-950 border-amber-500 shadow-2xs'
+                        : 'bg-stone-50 text-stone-700 border-stone-200 hover:bg-stone-100'
+                    }`}
+                  >
+                    <span>👑 Administrador</span>
+                  </button>
+                </div>
+              </div>
+
+              <div>
+                <label className="block text-xs font-bold text-stone-700 uppercase mb-1">
+                  Nome Completo *
                 </label>
                 <input
                   type="text"
                   required
-                  placeholder="Ex: Carlos Silva"
+                  placeholder={newRole === 'admin' ? 'Ex: Maria Gestora' : 'Ex: Carlos Silva / Seu Gil'}
                   value={newName}
                   onChange={(e) => {
                     const val = e.target.value;
@@ -1279,10 +1418,10 @@ Para acessar:
               <div>
                 <div className="flex items-center justify-between mb-1">
                   <label className="block text-xs font-bold text-stone-700 uppercase">
-                    Nome de Usuário (Login Simples) *
+                    Nome de Usuário (Login) *
                   </label>
                   <span className="text-[10px] font-bold text-amber-800 bg-amber-100 px-1.5 py-0.5 rounded">
-                    Sem e-mail!
+                    Sem @
                   </span>
                 </div>
                 <div className="relative">
@@ -1292,7 +1431,7 @@ Para acessar:
                   <input
                     type="text"
                     required
-                    placeholder="Ex: carlos"
+                    placeholder="Ex: seugil ou carlos"
                     value={newUsername}
                     onChange={(e) =>
                       setNewUsername(e.target.value.toLowerCase().replace(/[^a-z0-9._-]/g, ''))
@@ -1301,13 +1440,13 @@ Para acessar:
                   />
                 </div>
                 <p className="text-[10px] text-stone-500 mt-1">
-                  O cliente só digitará esse nome (ex: <strong>{newUsername || 'carlos'}</strong>) para entrar no celular.
+                  Basta digitar esse nome (ex: <strong>{newUsername || 'seugil'}</strong>) na tela de login.
                 </p>
               </div>
 
               <div>
                 <label className="block text-xs font-bold text-stone-700 uppercase mb-1">
-                  Telefone / WhatsApp do Revendedor *
+                  Telefone / WhatsApp *
                 </label>
                 <div className="relative">
                   <div className="absolute inset-y-0 left-0 pl-3 flex items-center pointer-events-none text-stone-400">
@@ -1335,24 +1474,72 @@ Para acessar:
                   <input
                     type="text"
                     required
-                    placeholder="Ex: 123456 ou pao2026"
+                    placeholder="Ex: 123456 ou morumbi"
                     value={newPassword}
                     onChange={(e) => setNewPassword(e.target.value)}
                     className="w-full pl-9 pr-3.5 py-2.5 bg-stone-50 border border-stone-300 rounded-xl text-xs font-bold text-stone-900 focus:outline-hidden focus:ring-2 focus:ring-red-800 focus:bg-white font-mono"
                   />
                 </div>
                 <p className="text-[10px] text-stone-500 mt-1">
-                  Mínimo 6 dígitos. A senha fica salva e o patrão pode reenviar para o cliente no WhatsApp a qualquer momento.
+                  Mínimo 6 dígitos. Fica salva para consulta do administrador a qualquer momento.
                 </p>
               </div>
 
+              {/* Custom Fixed Prices (Per-client pricing) */}
+              {newRole === 'revendedor' && (
+                <div className="p-3.5 bg-amber-50/80 border border-amber-200 rounded-2xl space-y-2">
+                  <div className="flex items-center justify-between">
+                    <label className="text-xs font-black text-amber-950 flex items-center gap-1.5">
+                      <DollarSign className="w-4 h-4 text-amber-700" />
+                      Preço Fixo Exclusivo deste Cliente (Opcional)
+                    </label>
+                    <span className="text-[10px] text-amber-800 font-bold">
+                      Personalizável
+                    </span>
+                  </div>
+                  <p className="text-[11px] text-stone-600">
+                    Defina o preço fixo deste cliente (ex: seu Gil a 0,85, outros a 0,70 ou 0,90). Deixe vazio para usar o padrão da padaria ({formatCurrency(prices?.priceSalty ?? DEFAULT_PRICES.priceSalty)}).
+                  </p>
+                  <div className="grid grid-cols-2 gap-2.5 pt-1">
+                    <div>
+                      <label className="block text-[11px] font-bold text-stone-700 mb-1">
+                        Pão Salgado (R$/un)
+                      </label>
+                      <input
+                        type="number"
+                        step="0.01"
+                        min="0.01"
+                        placeholder={String(prices?.priceSalty ?? DEFAULT_PRICES.priceSalty)}
+                        value={newCustomPriceSalty}
+                        onChange={(e) => setNewCustomPriceSalty(e.target.value)}
+                        className="w-full px-3 py-2 bg-white border border-stone-300 rounded-xl text-xs font-black text-stone-900 focus:ring-2 focus:ring-amber-500 font-mono"
+                      />
+                    </div>
+                    <div>
+                      <label className="block text-[11px] font-bold text-stone-700 mb-1">
+                        Pão Doce (R$/un)
+                      </label>
+                      <input
+                        type="number"
+                        step="0.01"
+                        min="0.01"
+                        placeholder={String(prices?.priceSweet ?? DEFAULT_PRICES.priceSweet)}
+                        value={newCustomPriceSweet}
+                        onChange={(e) => setNewCustomPriceSweet(e.target.value)}
+                        className="w-full px-3 py-2 bg-white border border-stone-300 rounded-xl text-xs font-black text-stone-900 focus:ring-2 focus:ring-amber-500 font-mono"
+                      />
+                    </div>
+                  </div>
+                </div>
+              )}
+
               <div>
                 <label className="block text-xs font-bold text-stone-500 uppercase mb-1">
-                  E-mail (Opcional — caso o cliente queira)
+                  E-mail (Opcional)
                 </label>
                 <input
                   type="email"
-                  placeholder="Deixe em branco para usar apenas o nome de usuário"
+                  placeholder="Deixe em branco para usar apenas o login por usuário"
                   value={newEmail}
                   onChange={(e) => setNewEmail(e.target.value)}
                   className="w-full px-3.5 py-2 bg-stone-50 border border-stone-200 rounded-xl text-xs text-stone-600 focus:outline-hidden focus:ring-2 focus:ring-red-800 focus:bg-white"
@@ -1361,7 +1548,7 @@ Para acessar:
 
               <div>
                 <label className="block text-xs font-bold text-stone-700 uppercase mb-1">
-                  Preferência de Notificações do Revendedor
+                  Preferência de Notificações
                 </label>
                 <div className="grid grid-cols-2 gap-2">
                   <button
@@ -1443,7 +1630,11 @@ Para acessar:
                   disabled={isSubmitting}
                   className="px-5 py-2.5 bg-red-800 hover:bg-red-900 text-white text-xs font-black uppercase rounded-xl shadow-md transition disabled:opacity-50"
                 >
-                  {isSubmitting ? 'Cadastrando...' : 'Salvar Revendedor'}
+                  {isSubmitting
+                    ? 'Cadastrando...'
+                    : newRole === 'admin'
+                    ? 'Salvar Administrador'
+                    : 'Salvar Revendedor'}
                 </button>
               </div>
             </form>
@@ -1566,6 +1757,71 @@ Para acessar:
                 </div>
               </div>
 
+              {/* Unit Price per Bread (Editable per order & Option to fix for client) */}
+              <div className="p-3.5 bg-amber-50/80 border border-amber-200 rounded-2xl space-y-2.5">
+                <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-1">
+                  <span className="text-xs font-black text-amber-950 flex items-center gap-1.5">
+                    <DollarSign className="w-4 h-4 text-amber-700" />
+                    Valor Unitário deste Pedido (Personalizável)
+                  </span>
+                  {clientForOrder.customPriceSalty && (
+                    <span className="text-[10px] bg-emerald-100 text-emerald-800 font-extrabold px-2 py-0.5 rounded-full inline-flex items-center gap-1 self-start sm:self-auto">
+                      ⭐ Preço Fixo Especial deste Cliente
+                    </span>
+                  )}
+                </div>
+
+                <div className="grid grid-cols-1 sm:grid-cols-2 gap-2.5">
+                  <div>
+                    <label className="block text-[11px] font-bold text-stone-700 mb-1">
+                      Valor Pão Salgado (R$/un)
+                    </label>
+                    <input
+                      type="number"
+                      step="0.01"
+                      min="0.01"
+                      value={orderUnitPriceSalty}
+                      onChange={(e) => setOrderUnitPriceSalty(e.target.value)}
+                      placeholder={String(clientForOrder.customPriceSalty ?? (prices?.priceSalty ?? DEFAULT_PRICES.priceSalty))}
+                      className="w-full px-3 py-2 bg-white border border-stone-300 rounded-xl text-xs font-black text-stone-900 focus:outline-hidden focus:ring-2 focus:ring-amber-500 font-mono"
+                    />
+                    <p className="text-[10px] text-stone-500 mt-0.5">
+                      Padrão da padaria: {formatCurrency(prices?.priceSalty ?? DEFAULT_PRICES.priceSalty)} (ex: 0.70 ou 0.85)
+                    </p>
+                  </div>
+
+                  <div>
+                    <label className="block text-[11px] font-bold text-stone-700 mb-1">
+                      Valor Pão Doce (R$/un)
+                    </label>
+                    <input
+                      type="number"
+                      step="0.01"
+                      min="0.01"
+                      value={orderUnitPriceSweet}
+                      onChange={(e) => setOrderUnitPriceSweet(e.target.value)}
+                      placeholder={String(clientForOrder.customPriceSweet ?? (prices?.priceSweet ?? DEFAULT_PRICES.priceSweet))}
+                      className="w-full px-3 py-2 bg-white border border-stone-300 rounded-xl text-xs font-black text-stone-900 focus:outline-hidden focus:ring-2 focus:ring-amber-500 font-mono"
+                    />
+                    <p className="text-[10px] text-stone-500 mt-0.5">
+                      Padrão da padaria: {formatCurrency(prices?.priceSweet ?? DEFAULT_PRICES.priceSweet)}
+                    </p>
+                  </div>
+                </div>
+
+                <label className="flex items-center gap-2 pt-1 cursor-pointer select-none border-t border-amber-200/60 mt-1">
+                  <input
+                    type="checkbox"
+                    checked={fixPriceForClient}
+                    onChange={(e) => setFixPriceForClient(e.target.checked)}
+                    className="w-4 h-4 rounded text-amber-600 focus:ring-amber-500 border-stone-300"
+                  />
+                  <span className="text-xs font-bold text-stone-800">
+                    Fixar este valor como padrão para este cliente daqui em diante
+                  </span>
+                </label>
+              </div>
+
               {/* Quantities */}
               <div className="grid grid-cols-1 sm:grid-cols-2 gap-3 pt-1">
                 {/* Salty */}
@@ -1573,7 +1829,7 @@ Para acessar:
                   <div className="flex items-center justify-between mb-1.5">
                     <span className="text-xs font-bold text-stone-800">Pão Salgado (Francês)</span>
                     <span className="text-[10px] font-extrabold text-amber-800">
-                      {formatCurrency(prices?.priceSalty ?? DEFAULT_PRICES.priceSalty)} / un
+                      {formatCurrency(Number(orderUnitPriceSalty) || (clientForOrder.customPriceSalty ?? (prices?.priceSalty ?? DEFAULT_PRICES.priceSalty)))} / un
                     </span>
                   </div>
                   <input
@@ -1611,7 +1867,7 @@ Para acessar:
                   <div className="flex items-center justify-between mb-1.5">
                     <span className="text-xs font-bold text-stone-800">Pão Doce</span>
                     <span className="text-[10px] font-extrabold text-amber-800">
-                      {formatCurrency(prices?.priceSweet ?? DEFAULT_PRICES.priceSweet)} / un
+                      {formatCurrency(Number(orderUnitPriceSweet) || (clientForOrder.customPriceSweet ?? (prices?.priceSweet ?? DEFAULT_PRICES.priceSweet)))} / un
                     </span>
                   </div>
                   <input
@@ -1652,13 +1908,13 @@ Para acessar:
                     Total Estimado do Pedido
                   </p>
                   <p className="text-xs text-stone-600">
-                    {Number(qtySalty) || 0} salgados + {Number(qtySweet) || 0} doces
+                    {Number(qtySalty) || 0} salgados ({formatCurrency(Number(orderUnitPriceSalty) || (clientForOrder.customPriceSalty ?? (prices?.priceSalty ?? DEFAULT_PRICES.priceSalty)))}) + {Number(qtySweet) || 0} doces ({formatCurrency(Number(orderUnitPriceSweet) || (clientForOrder.customPriceSweet ?? (prices?.priceSweet ?? DEFAULT_PRICES.priceSweet)))})
                   </p>
                 </div>
                 <p className="text-xl font-black text-amber-950">
                   {formatCurrency(
-                    (Number(qtySalty) || 0) * (prices?.priceSalty ?? DEFAULT_PRICES.priceSalty) +
-                      (Number(qtySweet) || 0) * (prices?.priceSweet ?? DEFAULT_PRICES.priceSweet)
+                    (Number(qtySalty) || 0) * (Number(orderUnitPriceSalty) || (clientForOrder.customPriceSalty ?? (prices?.priceSalty ?? DEFAULT_PRICES.priceSalty))) +
+                      (Number(qtySweet) || 0) * (Number(orderUnitPriceSweet) || (clientForOrder.customPriceSweet ?? (prices?.priceSweet ?? DEFAULT_PRICES.priceSweet)))
                   )}
                 </p>
               </div>
@@ -2072,9 +2328,85 @@ Para acessar:
                 />
               </div>
 
+              {/* Custom Fixed Prices for this Client */}
+              <div className="p-3.5 bg-amber-50/80 border border-amber-200 rounded-2xl space-y-2">
+                <div className="flex items-center justify-between">
+                  <label className="text-xs font-black text-amber-950 flex items-center gap-1.5">
+                    <DollarSign className="w-4 h-4 text-amber-700" />
+                    Preço Fixo Exclusivo deste Cliente
+                  </label>
+                  <span className="text-[10px] text-amber-800 font-bold bg-amber-100 px-2 py-0.5 rounded-full">
+                    ⭐ Preço Especial
+                  </span>
+                </div>
+                <p className="text-[11px] text-stone-600">
+                  Fixe o preço especial deste cliente (ex: 0,85 para o Seu Gil, 0,70 para outros). Deixe em branco para usar o padrão da padaria ({formatCurrency(prices?.priceSalty ?? DEFAULT_PRICES.priceSalty)}).
+                </p>
+                <div className="grid grid-cols-2 gap-2.5 pt-1">
+                  <div>
+                    <label className="block text-[11px] font-bold text-stone-700 mb-1">
+                      Pão Salgado (R$/un)
+                    </label>
+                    <input
+                      type="number"
+                      step="0.01"
+                      min="0.01"
+                      placeholder={String(prices?.priceSalty ?? DEFAULT_PRICES.priceSalty)}
+                      value={editCustomPriceSalty}
+                      onChange={(e) => setEditCustomPriceSalty(e.target.value)}
+                      className="w-full px-3 py-2 bg-white border border-stone-300 rounded-xl text-xs font-black text-stone-900 focus:ring-2 focus:ring-amber-500 font-mono"
+                    />
+                  </div>
+                  <div>
+                    <label className="block text-[11px] font-bold text-stone-700 mb-1">
+                      Pão Doce (R$/un)
+                    </label>
+                    <input
+                      type="number"
+                      step="0.01"
+                      min="0.01"
+                      placeholder={String(prices?.priceSweet ?? DEFAULT_PRICES.priceSweet)}
+                      value={editCustomPriceSweet}
+                      onChange={(e) => setEditCustomPriceSweet(e.target.value)}
+                      className="w-full px-3 py-2 bg-white border border-stone-300 rounded-xl text-xs font-black text-stone-900 focus:ring-2 focus:ring-amber-500 font-mono"
+                    />
+                  </div>
+                </div>
+              </div>
+
               <div>
                 <label className="block text-xs font-bold text-stone-700 uppercase mb-1">
-                  Tipo de Cliente
+                  Tipo de Conta / Função
+                </label>
+                <div className="grid grid-cols-2 gap-2">
+                  <button
+                    type="button"
+                    onClick={() => setEditRole('revendedor')}
+                    className={`py-2 px-3 rounded-xl border text-xs font-bold transition ${
+                      editRole === 'revendedor'
+                        ? 'bg-red-800 text-white border-red-800 shadow-2xs'
+                        : 'bg-stone-50 text-stone-700 border-stone-200 hover:bg-stone-100'
+                    }`}
+                  >
+                    🥖 Revendedor (Cliente)
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => setEditRole('admin')}
+                    className={`py-2 px-3 rounded-xl border text-xs font-bold transition ${
+                      editRole === 'admin'
+                        ? 'bg-amber-500 text-stone-950 border-amber-500 shadow-2xs'
+                        : 'bg-stone-50 text-stone-700 border-stone-200 hover:bg-stone-100'
+                    }`}
+                  >
+                    👑 Administrador
+                  </button>
+                </div>
+              </div>
+
+              <div>
+                <label className="block text-xs font-bold text-stone-700 uppercase mb-1">
+                  Tipo de Atendimento
                 </label>
                 <div className="grid grid-cols-2 gap-2">
                   <button
