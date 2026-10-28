@@ -12,7 +12,7 @@ import {
   Sparkles,
   Volume2,
 } from 'lucide-react';
-import { InAppNotification, UserProfile, NotificationPreference } from '../../types';
+import { InAppNotification, UserProfile, NotificationPreference, Order } from '../../types';
 import { formatDateTime } from '../../utils/formatters';
 import { useAuth } from '../../context/AuthContext';
 import { updateUserProfile } from '../../services/dataService';
@@ -23,17 +23,23 @@ import {
   showSystemNotification,
   playNotificationTone,
 } from '../../services/notificationService';
+import { NotificationDetailModal } from '../common/NotificationDetailModal';
 
 interface NotificationsViewProps {
   notifications: InAppNotification[];
   clients: UserProfile[];
+  orders?: Order[];
+  onNavigateToSituation?: (type: string, order?: Order, orderId?: string, resellerId?: string) => void;
 }
 
 export const NotificationsView: React.FC<NotificationsViewProps> = ({
   notifications,
   clients,
+  orders = [],
+  onNavigateToSituation,
 }) => {
   const { currentUser, userProfile } = useAuth();
+  const [selectedNotif, setSelectedNotif] = useState<InAppNotification | null>(null);
   const [pref, setPref] = useState<NotificationPreference>(
     userProfile?.notificationPreference || 'both'
   );

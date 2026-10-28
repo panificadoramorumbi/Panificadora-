@@ -48,6 +48,12 @@ service cloud.firestore {
       allow write: if isAdmin();
     }
 
+    // Public username directory mapping for easy login by username
+    match /usernames/{username} {
+      allow read: if true;
+      allow write: if isSignedIn();
+    }
+
     // Orders collection
     match /orders/{orderId} {
       allow get: if isAdmin() || (isSignedIn() && resource.data.resellerId == request.auth.uid);

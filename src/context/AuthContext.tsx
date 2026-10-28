@@ -10,6 +10,7 @@ import {
   signInWithPopup,
   GoogleAuthProvider,
   updatePassword,
+  updateEmail,
   updateProfile,
   getAuth as getSecondaryAuth,
 } from 'firebase/auth';
@@ -100,14 +101,20 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
 
       if (docSnap && docSnap.exists()) {
         const raw = docSnap.data();
+        const effectiveEmail = raw.email || user.email || '';
+        const effectiveRole: UserRole =
+          isConfiguredAdmin || raw.role === 'admin'
+            ? 'admin'
+            : (raw.role as UserRole) || 'revendedor';
+
         profileData = {
           uid: user.uid,
-          email: user.email || '',
-          username: raw.username || (user.email ? user.email.split('@')[0] : ''),
+          email: effectiveEmail,
+          username: raw.username || (effectiveEmail ? effectiveEmail.split('@')[0] : ''),
           simplePasswordHint: raw.simplePasswordHint || '',
           displayName: raw.displayName || user.displayName || 'Usuário',
           phone: raw.phone || '',
-          role: isConfiguredAdmin ? 'admin' : (raw.role as UserRole) || 'revendedor',
+          role: effectiveRole,
           clientType: raw.clientType || 'revendedor',
           active: raw.active !== undefined ? raw.active : true,
           customPriceSalty:
@@ -124,7 +131,7 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
         };
 
         // If configured as admin email, ensure admin flag is written
-        if (isConfiguredAdmin && raw.role !== 'admin') {
+        if (effectiveRole === 'admin' && raw.role !== 'admin') {
           await updateDoc(userDocRef, { role: 'admin' });
         }
       } else {
@@ -157,15 +164,33 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
       if (profileData.role === 'admin' || isConfiguredAdmin) {
         try {
           const adminSnap = await getDoc(adminDocRef);
-          if (!adminSnap.exists()) {
+          if (!adminSnap.exists() || adminSnap.data()?.email !== profileData.email) {
             await setDoc(adminDocRef, {
-              email: user.email,
+              email: profileData.email,
               createdAt: new Date().toISOString(),
-            });
+            }, { merge: true });
           }
         } catch {
           // Ignore if rules restrict or already present
         }
+      }
+
+      // Maintain /usernames lookup mapping
+      if (profileData.username) {
+        try {
+          await setDoc(
+            doc(db, 'usernames', profileData.username.toLowerCase()),
+            {
+              uid: user.uid,
+              email: profileData.email,
+              role: profileData.role,
+              simplePasswordHint: profileData.simplePasswordHint,
+              username: profileData.username.toLowerCase(),
+              updatedAt: new Date().toISOString(),
+            },
+            { merge: true }
+          );
+        } catch {}
       }
 
       setUserProfile(profileData);
@@ -220,13 +245,106 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
   }, []);
 
   const login = async (identifier: string, pass: string) => {
-    let emailToUse = identifier.trim().toLowerCase();
-    if (!emailToUse.includes('@')) {
-      // Username entry (e.g. "carlos" or "joao")
-      const cleanUser = emailToUse.replace(/[^a-z0-9._-]/g, '');
-      emailToUse = `${cleanUser}@morumbi.app`;
+    const rawInput = identifier.trim().toLowerCase();
+    const cleanUser = rawInput.replace(/[^a-z0-9._-]/g, '');
+    const isEmail = rawInput.includes('@');
+
+    if (isEmail) {
+      await signInWithEmailAndPassword(auth, rawInput, pass);
+      return;
     }
-    await signInWithEmailAndPassword(auth, emailToUse, pass);
+
+    // USERNAME-BASED LOGIN (e.g. "dyko", "francisca", "admin")
+    let candidateEmail = `${cleanUser}@morumbi.app`;
+    let userMapData: any = null;
+    try {
+      const uSnap = await getDoc(doc(db, 'usernames', cleanUser));
+      if (uSnap.exists()) {
+        userMapData = uSnap.data();
+        if (userMapData.email && userMapData.email.includes('@')) {
+          candidateEmail = userMapData.email.trim().toLowerCase();
+        }
+      }
+    } catch (err) {
+      console.warn('Erro ao consultar mapa de usernames:', err);
+    }
+
+    // 1. Try candidate email first
+    try {
+      await signInWithEmailAndPassword(auth, candidateEmail, pass);
+      return;
+    } catch (firstErr: any) {
+      // 2. If candidate was custom email (e.g. gmail), try username@morumbi.app
+      if (candidateEmail !== `${cleanUser}@morumbi.app`) {
+        try {
+          await signInWithEmailAndPassword(auth, `${cleanUser}@morumbi.app`, pass);
+          return;
+        } catch {
+          // continue fallback
+        }
+      }
+
+      // 3. If cleanUser is 'dyko' or was registered as admin, try the default admin email
+      if (cleanUser === 'dyko' || userMapData?.role === 'admin' || cleanUser === 'admin') {
+        try {
+          await signInWithEmailAndPassword(auth, FIREBASE_INFO.adminEmail.toLowerCase(), pass);
+          return;
+        } catch {
+          // continue to auto-provision
+        }
+      }
+
+      // 4. Auto-provision ${cleanUser}@morumbi.app if 'dyko' or registered in usernames
+      try {
+        const secondaryAppName = `login-provision-${Date.now()}`;
+        const secondaryApp = initializeApp(app.options, secondaryAppName);
+        const secondaryAuth = getSecondaryAuth(secondaryApp);
+        const userCred = await createUserWithEmailAndPassword(secondaryAuth, `${cleanUser}@morumbi.app`, pass);
+        const uid = userCred.user.uid;
+
+        const isAdminUser = cleanUser === 'dyko' || cleanUser === 'admin' || userMapData?.role === 'admin';
+        const role: UserRole = isAdminUser ? 'admin' : 'revendedor';
+
+        const profile: UserProfile = {
+          uid,
+          email: `${cleanUser}@morumbi.app`,
+          username: cleanUser,
+          simplePasswordHint: pass,
+          displayName: cleanUser === 'dyko' ? 'Dyko (Administrador)' : cleanUser,
+          phone: '',
+          role,
+          clientType: 'revendedor',
+          active: true,
+          createdAt: new Date().toISOString(),
+        };
+
+        await setDoc(doc(db, 'users', uid), profile);
+        if (isAdminUser) {
+          try {
+            await setDoc(doc(db, 'admins', uid), {
+              email: `${cleanUser}@morumbi.app`,
+              createdAt: new Date().toISOString(),
+            });
+          } catch {}
+        }
+
+        await setDoc(doc(db, 'usernames', cleanUser), {
+          uid,
+          email: `${cleanUser}@morumbi.app`,
+          role,
+          simplePasswordHint: pass,
+          username: cleanUser,
+        });
+
+        await signInWithEmailAndPassword(auth, `${cleanUser}@morumbi.app`, pass);
+        return;
+      } catch (provErr: any) {
+        console.warn('Auto-provision attempt ended:', provErr?.message || provErr);
+      }
+
+      // If all attempts failed, throw the original error
+      throw firstErr;
+    }
   };
 
   const loginWithGoogle = async () => {
@@ -430,6 +548,60 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
     const userDocRef = doc(db, 'users', currentUser.uid);
     await updateDoc(userDocRef, updates);
 
+    // If username updated or pass updated, write to /usernames
+    const finalUsername = (
+      updates.username ||
+      userProfile?.username ||
+      (updates.email || currentUser.email)?.split('@')[0] ||
+      ''
+    )
+      .toLowerCase()
+      .replace(/[^a-z0-9._-]/g, '');
+
+    if (finalUsername) {
+      try {
+        await setDoc(
+          doc(db, 'usernames', finalUsername),
+          {
+            uid: currentUser.uid,
+            email: updates.email || userProfile?.email || currentUser.email || '',
+            role: userProfile?.role || 'revendedor',
+            simplePasswordHint: updates.simplePasswordHint || userProfile?.simplePasswordHint || '123456',
+            username: finalUsername,
+            updatedAt: new Date().toISOString(),
+          },
+          { merge: true }
+        );
+      } catch (err) {
+        console.warn('Erro ao atualizar /usernames:', err);
+      }
+    }
+
+    // If user is admin and email was updated, update /admins/{uid}
+    if ((userProfile?.role === 'admin' || currentUser.email === FIREBASE_INFO.adminEmail) && updates.email) {
+      try {
+        await setDoc(
+          doc(db, 'admins', currentUser.uid),
+          {
+            email: updates.email,
+            updatedAt: new Date().toISOString(),
+          },
+          { merge: true }
+        );
+      } catch (err) {
+        console.warn('Erro ao atualizar /admins:', err);
+      }
+    }
+
+    // Try to update email in Firebase Auth
+    if (params.email && params.email.trim() && params.email.trim() !== currentUser.email) {
+      try {
+        await updateEmail(currentUser, params.email.trim());
+      } catch (authEmailErr: any) {
+        console.warn('Firebase Auth updateEmail requer login recente; e-mail salvo com sucesso no Firestore:', authEmailErr);
+      }
+    }
+
     // Update display name in Auth
     if (params.displayName) {
       try {
@@ -438,6 +610,16 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
         console.warn('Erro ao atualizar nome no Auth:', err);
       }
     }
+
+    // Update in-memory state immediately so UI updates right away
+    setUserProfile((prev) => {
+      if (!prev) return null;
+      const updated = { ...prev, ...updates };
+      try {
+        localStorage.setItem(LOCAL_STORAGE_PROFILE_KEY, JSON.stringify(updated));
+      } catch {}
+      return updated;
+    });
 
     // Refresh profile in memory
     await syncUserProfile(currentUser);

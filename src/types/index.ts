@@ -120,4 +120,7 @@ export interface InAppNotification {
   read: boolean;
   createdAt: string;
   link?: string;
+  orderId?: string;
+  orderNumber?: string;
+  resellerId?: string;
 }

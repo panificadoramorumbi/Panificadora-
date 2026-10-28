@@ -272,6 +272,9 @@ export function subscribeNotifications(
             read: Boolean(d.read),
             createdAt: d.createdAt || '',
             link: d.link,
+            orderId: d.orderId,
+            orderNumber: d.orderNumber,
+            resellerId: d.resellerId,
           };
         })
         .filter((n) => !userId || n.targetUserId === 'all' || n.targetUserId === userId);
@@ -295,6 +298,9 @@ export async function sendNotification(data: {
   message: string;
   type: InAppNotification['type'];
   link?: string;
+  orderId?: string;
+  orderNumber?: string;
+  resellerId?: string;
 }) {
   try {
     const collRef = collection(db, 'notifications');
@@ -403,6 +409,9 @@ export async function createOrder(params: {
       message: `${resellerName} enviou pedido: ${qtySaltyPickup} pães salgados e ${qtySweetPickup} pães doces para entrega em ${deliveryDate}.`,
       type: 'pedido',
       link: '/pedidos',
+      orderId: docRef.id,
+      orderNumber,
+      resellerId,
     });
 
     return docRef.id;
@@ -476,6 +485,9 @@ export async function recordLeftovers(params: {
       title: `Sobras Registradas - Pedido ${order.orderNumber}`,
       message: `${recordedByName} registrou sobras: ${qtySaltyLeftover} salgados, ${qtySweetLeftover} doces. Valor final: R$ ${metrics.finalTotal.toFixed(2)}.`,
       type: 'sobras',
+      orderId: order.id,
+      orderNumber: order.orderNumber,
+      resellerId: order.resellerId,
     });
   } catch (error) {
     handleFirestoreError(error, OperationType.UPDATE, `orders/${order.id}`);
@@ -683,6 +695,9 @@ export async function registerPayment(params: {
       title: 'Pagamento Registrado',
       message: `Recebemos seu pagamento de R$ ${amount.toFixed(2)} (${paymentMethod.toUpperCase()}) em ${paymentDate}. Saldo atualizado com sucesso.`,
       type: 'pagamento',
+      resellerId,
+      orderId: ordersToUpdate[0]?.id,
+      orderNumber: ordersToUpdate[0]?.orderNumber,
     });
 
     return paymentDocRef.id;
