@@ -35,7 +35,7 @@ import {
   Save,
 } from 'lucide-react';
 import { Order, ProductPrices, PaymentRecord, InAppNotification, NotificationPreference } from '../../types';
-import { formatCurrency, formatDate, formatDateTime, calculateOrderMetrics, formatPhone } from '../../utils/formatters';
+import { formatCurrency, formatDate, formatDateTime, calculateOrderMetrics, formatPhone, sanitizeUsername } from '../../utils/formatters';
 import { createOrder, recordLeftovers, updateUserProfile } from '../../services/dataService';
 import {
   requestNotificationPermission,
@@ -45,6 +45,7 @@ import {
 } from '../../services/notificationService';
 import { useAuth } from '../../context/AuthContext';
 import { PWAInstallButton } from '../PWAInstallButton';
+import { NotificationDetailModal } from '../common/NotificationDetailModal';
 
 interface ResellerHomeProps {
   orders: Order[];
@@ -84,6 +85,9 @@ export const ResellerHome: React.FC<ResellerHomeProps> = ({
   const [sweetLeftover, setSweetLeftover] = useState<number>(0);
   const [isSubmittingLeftovers, setIsSubmittingLeftovers] = useState(false);
   const [leftoverError, setLeftoverError] = useState<string | null>(null);
+
+  // Notification Detail Modal State
+  const [selectedNotifForDetail, setSelectedNotifForDetail] = useState<InAppNotification | null>(null);
 
   // Phone registration modal state (especially for users logging in via Google)
   const [showPhoneModal, setShowPhoneModal] = useState(false);
@@ -234,7 +238,7 @@ export const ResellerHome: React.FC<ResellerHomeProps> = ({
       await updateUserCredentials({
         displayName: profileName.trim(),
         phone: profilePhone.trim(),
-        username: profileUsername.trim().toLowerCase().replace(/[^a-z0-9._-]/g, '') || undefined,
+        username: sanitizeUsername(profileUsername) || undefined,
         email: profileEmail.trim() || undefined,
         newPassword: profilePasswordHint.trim() || undefined,
       });
@@ -1405,10 +1409,12 @@ export const ResellerHome: React.FC<ResellerHomeProps> = ({
                 {notifications.map((n) => (
                   <div
                     key={n.id}
-                    className="p-4 bg-stone-50 hover:bg-amber-50/30 rounded-2xl border border-stone-200 text-xs space-y-1 transition"
+                    onClick={() => setSelectedNotifForDetail(n)}
+                    className="p-4 bg-stone-50 hover:bg-amber-50/50 cursor-pointer rounded-2xl border border-stone-200 hover:border-amber-400 text-xs space-y-1.5 transition shadow-2xs group"
+                    title="Toque para abrir a notificação e ver completo"
                   >
                     <div className="flex items-center justify-between">
-                      <p className="font-bold text-stone-900 flex items-center gap-1.5">
+                      <p className="font-black text-stone-900 group-hover:text-red-900 flex items-center gap-1.5 transition">
                         <Croissant className="w-3.5 h-3.5 text-amber-500" />
                         <span>{n.title}</span>
                       </p>
@@ -1416,7 +1422,12 @@ export const ResellerHome: React.FC<ResellerHomeProps> = ({
                         {formatDateTime(n.createdAt)}
                       </span>
                     </div>
-                    <p className="text-stone-600 leading-relaxed pl-5">{n.message}</p>
+                    <p className="text-stone-600 leading-relaxed pl-5 line-clamp-2">{n.message}</p>
+                    <div className="pl-5 pt-1">
+                      <span className="text-[10px] font-bold text-amber-800 bg-amber-100/70 px-2 py-0.5 rounded-full group-hover:bg-amber-200 transition">
+                        Toque para ver completo & abrir situação ➔
+                      </span>
+                    </div>
                   </div>
                 ))}
               </div>
@@ -1424,6 +1435,29 @@ export const ResellerHome: React.FC<ResellerHomeProps> = ({
           </div>
         </div>
       )}
+
+      {/* Modal para ver notificação completa do revendedor */}
+      <NotificationDetailModal
+        notification={selectedNotifForDetail}
+        onClose={() => setSelectedNotifForDetail(null)}
+        orders={myOrders}
+        onNavigateAction={(type, linkedOrder) => {
+          if (type === 'sobras') {
+            if (linkedOrder) {
+              setSelectedOrderForLeftovers(linkedOrder);
+              setSaltyLeftover(0);
+              setSweetLeftover(0);
+              setLeftoverError(null);
+            }
+            setActiveTab('leftovers');
+          } else if (type === 'pagamento') {
+            setActiveTab('financial');
+          } else {
+            setActiveTab('orders');
+          }
+        }}
+        isAdmin={false}
+      />
 
       {/* TAB CONTENT 5: MEUS DADOS & SENHA (PERFIL DO CLIENTE) */}
       {activeTab === 'profile' && (

@@ -272,7 +272,24 @@ const MainApp: React.FC = () => {
               )}
 
               {adminView === 'notifications' && (
-                <NotificationsView notifications={notifications} clients={clients} />
+                <NotificationsView
+                  notifications={notifications}
+                  clients={clients}
+                  orders={orders}
+                  onNavigateToSituation={(type, order, orderId, resellerId) => {
+                    if (resellerId) setSelectedClientId(resellerId);
+                    if (type === 'sobras' || type === 'pedido' || type === 'alteracao') {
+                      if (order) setOrderToCorrect(order);
+                      setAdminView('orders');
+                    } else if (type === 'pagamento') {
+                      setAdminView('settlement');
+                    } else if (type === 'revendedor') {
+                      setAdminView('clients');
+                    } else {
+                      setAdminView('orders');
+                    }
+                  }}
+                />
               )}
 
               {adminView === 'profile' && (

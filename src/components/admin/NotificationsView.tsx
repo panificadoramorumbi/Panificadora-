@@ -141,21 +141,31 @@ export const NotificationsView: React.FC<NotificationsViewProps> = ({
                 {notifications.map((notif) => (
                   <div
                     key={notif.id}
-                    className={`p-4 rounded-2xl border transition ${
+                    onClick={() => setSelectedNotif(notif)}
+                    className={`p-4 rounded-2xl border transition cursor-pointer group hover:border-amber-400 hover:shadow-md active:scale-[0.99] ${
                       notif.read
-                        ? 'bg-stone-50 border-stone-200'
-                        : 'bg-amber-50/70 border-amber-300 shadow-xs'
+                        ? 'bg-stone-50 border-stone-200 hover:bg-white'
+                        : 'bg-amber-50/70 border-amber-300 shadow-xs hover:bg-amber-50'
                     }`}
+                    title="Clique para abrir esta notificação e ir para a situação correspondente"
                   >
                     <div className="flex items-start justify-between gap-3">
                       <div>
-                        <p className="text-xs font-black text-stone-900">{notif.title}</p>
-                        <p className="text-xs text-stone-600 mt-1 leading-relaxed">
+                        <p className="text-xs font-black text-stone-900 group-hover:text-red-900 transition flex items-center gap-1.5">
+                          <Bell className="w-3.5 h-3.5 text-amber-600" />
+                          <span>{notif.title}</span>
+                        </p>
+                        <p className="text-xs text-stone-600 mt-1 leading-relaxed line-clamp-2">
                           {notif.message}
                         </p>
-                        <span className="text-[10px] text-stone-400 mt-2 block">
-                          {formatDateTime(notif.createdAt)}
-                        </span>
+                        <div className="flex items-center gap-3 mt-2 text-[10px]">
+                          <span className="text-stone-400">
+                            {formatDateTime(notif.createdAt)}
+                          </span>
+                          <span className="font-bold text-amber-800 bg-amber-100/70 px-2 py-0.5 rounded-full group-hover:bg-amber-200 transition">
+                            Toque para ver completo & abrir situação ➔
+                          </span>
+                        </div>
                       </div>
                       <span className="px-2 py-0.5 rounded-full text-[9px] font-black uppercase bg-stone-200 text-stone-700 shrink-0">
                         {notif.type}
@@ -167,6 +177,15 @@ export const NotificationsView: React.FC<NotificationsViewProps> = ({
             )}
           </div>
         </div>
+
+        {/* Modal para ver notificação completa e navegar para a situação */}
+        <NotificationDetailModal
+          notification={selectedNotif}
+          onClose={() => setSelectedNotif(null)}
+          orders={orders}
+          onNavigateAction={onNavigateToSituation}
+          isAdmin={true}
+        />
 
         {/* Right Column: Preferences & WhatsApp Integration Specs */}
         <div className="lg:col-span-5 space-y-6">

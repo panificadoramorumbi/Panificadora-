@@ -125,3 +125,20 @@ export function calculateOrderMetrics(params: {
     balanceDue,
   };
 }
+
+/**
+ * Normalizes and cleans username inputs:
+ * - strips leading/trailing spaces
+ * - removes accents/diacritics (e.g. Célia -> celia, José -> jose, João -> joao)
+ * - converts to lowercase
+ * - strips any character that isn't a-z, 0-9, dot, underscore, or hyphen
+ */
+export function sanitizeUsername(input: string | undefined | null): string {
+  if (!input) return '';
+  return input
+    .trim()
+    .toLowerCase()
+    .normalize('NFD')
+    .replace(/[\u0300-\u036f]/g, '')
+    .replace(/[^a-z0-9._-]/g, '');
+}

@@ -22,7 +22,7 @@ import {
   ProductPrices,
   InAppNotification,
 } from '../types';
-import { calculateOrderMetrics } from '../utils/formatters';
+import { calculateOrderMetrics, sanitizeUsername } from '../utils/formatters';
 
 // Default initial prices if settings doc is empty
 export const DEFAULT_PRICES: ProductPrices = {
@@ -842,6 +842,33 @@ export async function updateUserProfile(
       ...data,
       updatedAt: new Date().toISOString(),
     });
+
+    // Sync /usernames directory mapping
+    try {
+      const snap = await getDoc(docRef);
+      if (snap.exists()) {
+        const full = snap.data();
+        const rawUser = full.username || sanitizeUsername(full.displayName) || '';
+        const cleanUser = sanitizeUsername(rawUser);
+        if (cleanUser) {
+          await setDoc(
+            doc(db, 'usernames', cleanUser),
+            {
+              uid,
+              email: full.email || `${cleanUser}@morumbi.app`,
+              username: cleanUser,
+              displayName: full.displayName || cleanUser,
+              role: full.role || 'revendedor',
+              simplePasswordHint: full.simplePasswordHint || '123456',
+              updatedAt: new Date().toISOString(),
+            },
+            { merge: true }
+          );
+        }
+      }
+    } catch (uErr) {
+      console.warn('Erro ao sincronizar /usernames:', uErr);
+    }
   } catch (error) {
     handleFirestoreError(error, OperationType.UPDATE, `users/${uid}`);
   }
@@ -849,13 +876,26 @@ export async function updateUserProfile(
 
 /**
  * Admin Permanently Delete Reseller Profile
- * Cascade deletes the client and all associated orders, payments, and notifications
+ * Cascade deletes the client and all associated orders, payments, notifications and username mappings
  * so no historical balances or amounts linger in the system.
  */
 export async function deleteUserProfile(uid: string) {
   try {
-    // 1. Delete user profile doc
     const docRef = doc(db, 'users', uid);
+
+    // Look up username to clean up from /usernames
+    try {
+      const snap = await getDoc(docRef);
+      if (snap.exists()) {
+        const full = snap.data();
+        const cleanUser = sanitizeUsername(full.username || full.displayName);
+        if (cleanUser) {
+          await deleteDoc(doc(db, 'usernames', cleanUser));
+        }
+      }
+    } catch {}
+
+    // 1. Delete user profile doc
     await deleteDoc(docRef);
 
     // 2. Cascade delete all orders for this reseller
@@ -1050,5 +1090,89 @@ export async function cleanAppKeepOnlyFrancisca(): Promise<{
   } catch (error) {
     handleFirestoreError(error, OperationType.DELETE, 'cleanAppKeepOnlyFrancisca');
     return { deletedOrders: 0, deletedPayments: 0, deletedUsers: 0, franciscaUid: '' };
+  }
+}
+
+/**
+ * Clean app and keep ONLY the Administrator account (dyko / wiliamedfprofessor@gmail.com).
+ * Completely deletes all other reseller / client profiles, orders, payments, notifications, audit logs,
+ * and /usernames mappings (preserving only dyko / admin).
+ * Leaves all application settings, price configurations, and system rules completely intact.
+ */
+export async function cleanAppKeepOnlyAdmin(): Promise<{
+  deletedOrders: number;
+  deletedPayments: number;
+  deletedUsers: number;
+  deletedUsernames: number;
+}> {
+  try {
+    let deletedOrders = 0;
+    let deletedPayments = 0;
+    let deletedUsers = 0;
+    let deletedUsernames = 0;
+
+    // 1. Delete all orders
+    const ordersSnap = await getDocs(collection(db, 'orders'));
+    for (const d of ordersSnap.docs) {
+      await deleteDoc(doc(db, 'orders', d.id));
+      deletedOrders++;
+    }
+
+    // 2. Delete all payments
+    const paymentsSnap = await getDocs(collection(db, 'payments'));
+    for (const d of paymentsSnap.docs) {
+      await deleteDoc(doc(db, 'payments', d.id));
+      deletedPayments++;
+    }
+
+    // 3. Delete all notifications
+    const notifsSnap = await getDocs(collection(db, 'notifications'));
+    for (const d of notifsSnap.docs) {
+      await deleteDoc(doc(db, 'notifications', d.id));
+    }
+
+    // 4. Delete all audit logs
+    const auditSnap = await getDocs(collection(db, 'audit_logs'));
+    for (const d of auditSnap.docs) {
+      await deleteDoc(doc(db, 'audit_logs', d.id));
+    }
+
+    // 5. Delete all users except administrator
+    const usersSnap = await getDocs(collection(db, 'users'));
+    for (const d of usersSnap.docs) {
+      const data = d.data();
+      const isAdm =
+        data.role === 'admin' ||
+        (data.email && data.email.toLowerCase().includes('wiliamedfprofessor')) ||
+        (data.email && data.email.toLowerCase() === 'dyko@morumbi.app') ||
+        (data.username && data.username.toLowerCase() === 'dyko');
+
+      if (!isAdm) {
+        await deleteDoc(doc(db, 'users', d.id));
+        deletedUsers++;
+      }
+    }
+
+    // 6. Delete all username directory records except dyko and admin
+    const usernamesSnap = await getDocs(collection(db, 'usernames'));
+    for (const d of usernamesSnap.docs) {
+      const uId = d.id.toLowerCase();
+      const uData = d.data();
+      const isAdm =
+        uId === 'dyko' ||
+        uId === 'admin' ||
+        uData.role === 'admin' ||
+        (uData.email && uData.email.toLowerCase().includes('wiliamedfprofessor'));
+
+      if (!isAdm) {
+        await deleteDoc(doc(db, 'usernames', d.id));
+        deletedUsernames++;
+      }
+    }
+
+    return { deletedOrders, deletedPayments, deletedUsers, deletedUsernames };
+  } catch (error) {
+    handleFirestoreError(error, OperationType.DELETE, 'cleanAppKeepOnlyAdmin');
+    return { deletedOrders: 0, deletedPayments: 0, deletedUsers: 0, deletedUsernames: 0 };
   }
 }

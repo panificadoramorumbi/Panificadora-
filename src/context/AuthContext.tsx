@@ -23,6 +23,7 @@ import {
 } from 'firebase/firestore';
 import { auth, db, app, handleFirestoreError, OperationType, FIREBASE_INFO } from '../lib/firebase';
 import { UserProfile, UserRole, NotificationPreference } from '../types';
+import { sanitizeUsername } from '../utils/formatters';
 
 interface AuthContextType {
   currentUser: User | null;
@@ -107,12 +108,23 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
             ? 'admin'
             : (raw.role as UserRole) || 'revendedor';
 
+        const cleanUser = raw.username || sanitizeUsername(raw.displayName) || (effectiveEmail ? effectiveEmail.split('@')[0] : '');
+        let effectiveDisplayName = raw.displayName || user.displayName || '';
+
+        // If the stored displayName is literally 'Revendedor' or empty, derive human name from username
+        if ((!effectiveDisplayName || effectiveDisplayName.toLowerCase() === 'revendedor') && cleanUser) {
+          effectiveDisplayName = cleanUser.charAt(0).toUpperCase() + cleanUser.slice(1);
+        }
+        if (!effectiveDisplayName) {
+          effectiveDisplayName = isConfiguredAdmin ? 'Administrador Morumbi' : 'Cliente';
+        }
+
         profileData = {
           uid: user.uid,
           email: effectiveEmail,
-          username: raw.username || (effectiveEmail ? effectiveEmail.split('@')[0] : ''),
+          username: cleanUser,
           simplePasswordHint: raw.simplePasswordHint || '',
-          displayName: raw.displayName || user.displayName || 'Usuário',
+          displayName: effectiveDisplayName,
           phone: raw.phone || '',
           role: effectiveRole,
           clientType: raw.clientType || 'revendedor',
@@ -136,15 +148,25 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
         }
       } else {
         // Document does not exist yet (e.g. first login with Google)
-        const cleanUsername = user.email
-          ? user.email.split('@')[0].toLowerCase().replace(/[^a-z0-9._-]/g, '')
-          : (user.displayName || 'usuario').toLowerCase().replace(/[^a-z0-9._-]/g, '');
+        const cleanUsername = sanitizeUsername(
+          user.email
+            ? user.email.split('@')[0]
+            : (user.displayName || 'usuario')
+        );
+
+        const computedName =
+          user.displayName ||
+          (isConfiguredAdmin
+            ? 'Administrador Morumbi'
+            : cleanUsername
+            ? cleanUsername.charAt(0).toUpperCase() + cleanUsername.slice(1)
+            : 'Cliente');
 
         profileData = {
           uid: user.uid,
           email: user.email || '',
           username: cleanUsername,
-          displayName: user.displayName || (isConfiguredAdmin ? 'Administrador Morumbi' : 'Revendedor'),
+          displayName: computedName,
           phone: user.phoneNumber || '',
           role: isConfiguredAdmin ? 'admin' : 'revendedor',
           clientType: 'revendedor',
@@ -245,18 +267,20 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
   }, []);
 
   const login = async (identifier: string, pass: string) => {
-    const rawInput = identifier.trim().toLowerCase();
-    const cleanUser = rawInput.replace(/[^a-z0-9._-]/g, '');
+    const rawInput = identifier.trim();
+    const cleanUser = sanitizeUsername(rawInput);
     const isEmail = rawInput.includes('@');
 
     if (isEmail) {
-      await signInWithEmailAndPassword(auth, rawInput, pass);
+      await signInWithEmailAndPassword(auth, rawInput.toLowerCase(), pass);
       return;
     }
 
-    // USERNAME-BASED LOGIN (e.g. "dyko", "francisca", "admin")
+    // USERNAME-BASED LOGIN (e.g. "dyko", "celia", "manuel", "francisca")
     let candidateEmail = `${cleanUser}@morumbi.app`;
     let userMapData: any = null;
+
+    // 1. Check /usernames/{cleanUser}
     try {
       const uSnap = await getDoc(doc(db, 'usernames', cleanUser));
       if (uSnap.exists()) {
@@ -264,17 +288,29 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
         if (userMapData.email && userMapData.email.includes('@')) {
           candidateEmail = userMapData.email.trim().toLowerCase();
         }
+      } else {
+        // Fallback: check stripped version without accent normalization (e.g. "clia" if saved previously)
+        const unaccented = rawInput.toLowerCase().replace(/[^a-z0-9._-]/g, '');
+        if (unaccented && unaccented !== cleanUser) {
+          const uSnap2 = await getDoc(doc(db, 'usernames', unaccented));
+          if (uSnap2.exists()) {
+            userMapData = uSnap2.data();
+            if (userMapData.email && userMapData.email.includes('@')) {
+              candidateEmail = userMapData.email.trim().toLowerCase();
+            }
+          }
+        }
       }
     } catch (err) {
       console.warn('Erro ao consultar mapa de usernames:', err);
     }
 
-    // 1. Try candidate email first
+    // 2. Try candidate email first
     try {
       await signInWithEmailAndPassword(auth, candidateEmail, pass);
       return;
     } catch (firstErr: any) {
-      // 2. If candidate was custom email (e.g. gmail), try username@morumbi.app
+      // 3. If candidate was custom email (e.g. gmail), try username@morumbi.app
       if (candidateEmail !== `${cleanUser}@morumbi.app`) {
         try {
           await signInWithEmailAndPassword(auth, `${cleanUser}@morumbi.app`, pass);
@@ -284,65 +320,69 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
         }
       }
 
-      // 3. If cleanUser is 'dyko' or was registered as admin, try the default admin email
+      // Also try legacy unaccented candidate (e.g. clia@morumbi.app) if different
+      const legacyCandidate = `${rawInput.toLowerCase().replace(/[^a-z0-9._-]/g, '')}@morumbi.app`;
+      if (legacyCandidate !== `${cleanUser}@morumbi.app` && legacyCandidate !== candidateEmail) {
+        try {
+          await signInWithEmailAndPassword(auth, legacyCandidate, pass);
+          return;
+        } catch {}
+      }
+
+      // 4. If cleanUser is 'dyko' or was registered as admin, try the default admin email
       if (cleanUser === 'dyko' || userMapData?.role === 'admin' || cleanUser === 'admin') {
         try {
           await signInWithEmailAndPassword(auth, FIREBASE_INFO.adminEmail.toLowerCase(), pass);
           return;
         } catch {
-          // continue to auto-provision
+          // continue to admin auto-provision
         }
       }
 
-      // 4. Auto-provision ${cleanUser}@morumbi.app if 'dyko' or registered in usernames
-      try {
-        const secondaryAppName = `login-provision-${Date.now()}`;
-        const secondaryApp = initializeApp(app.options, secondaryAppName);
-        const secondaryAuth = getSecondaryAuth(secondaryApp);
-        const userCred = await createUserWithEmailAndPassword(secondaryAuth, `${cleanUser}@morumbi.app`, pass);
-        const uid = userCred.user.uid;
+      // 5. Auto-provision ONLY for dyko or admin accounts (NEVER for normal resellers)
+      const isAdminUser = cleanUser === 'dyko' || cleanUser === 'admin' || userMapData?.role === 'admin';
+      if (isAdminUser) {
+        try {
+          const secondaryAppName = `login-provision-${Date.now()}`;
+          const secondaryApp = initializeApp(app.options, secondaryAppName);
+          const secondaryAuth = getSecondaryAuth(secondaryApp);
+          const userCred = await createUserWithEmailAndPassword(secondaryAuth, `${cleanUser}@morumbi.app`, pass);
+          const uid = userCred.user.uid;
 
-        const isAdminUser = cleanUser === 'dyko' || cleanUser === 'admin' || userMapData?.role === 'admin';
-        const role: UserRole = isAdminUser ? 'admin' : 'revendedor';
+          const profile: UserProfile = {
+            uid,
+            email: `${cleanUser}@morumbi.app`,
+            username: cleanUser,
+            simplePasswordHint: pass,
+            displayName: cleanUser === 'dyko' ? 'Dyko (Administrador)' : 'Administrador',
+            phone: '',
+            role: 'admin',
+            clientType: 'revendedor',
+            active: true,
+            createdAt: new Date().toISOString(),
+          };
 
-        const profile: UserProfile = {
-          uid,
-          email: `${cleanUser}@morumbi.app`,
-          username: cleanUser,
-          simplePasswordHint: pass,
-          displayName: cleanUser === 'dyko' ? 'Dyko (Administrador)' : cleanUser,
-          phone: '',
-          role,
-          clientType: 'revendedor',
-          active: true,
-          createdAt: new Date().toISOString(),
-        };
+          await setDoc(doc(db, 'users', uid), profile);
+          await setDoc(doc(db, 'admins', uid), {
+            email: `${cleanUser}@morumbi.app`,
+            createdAt: new Date().toISOString(),
+          });
+          await setDoc(doc(db, 'usernames', cleanUser), {
+            uid,
+            email: `${cleanUser}@morumbi.app`,
+            role: 'admin',
+            simplePasswordHint: pass,
+            username: cleanUser,
+          });
 
-        await setDoc(doc(db, 'users', uid), profile);
-        if (isAdminUser) {
-          try {
-            await setDoc(doc(db, 'admins', uid), {
-              email: `${cleanUser}@morumbi.app`,
-              createdAt: new Date().toISOString(),
-            });
-          } catch {}
+          await signInWithEmailAndPassword(auth, `${cleanUser}@morumbi.app`, pass);
+          return;
+        } catch (provErr: any) {
+          console.warn('Admin auto-provision attempt ended:', provErr?.message || provErr);
         }
-
-        await setDoc(doc(db, 'usernames', cleanUser), {
-          uid,
-          email: `${cleanUser}@morumbi.app`,
-          role,
-          simplePasswordHint: pass,
-          username: cleanUser,
-        });
-
-        await signInWithEmailAndPassword(auth, `${cleanUser}@morumbi.app`, pass);
-        return;
-      } catch (provErr: any) {
-        console.warn('Auto-provision attempt ended:', provErr?.message || provErr);
       }
 
-      // If all attempts failed, throw the original error
+      // If all attempts failed for a reseller, throw the credential error (prevent dummy accounts)
       throw firstErr;
     }
   };
@@ -388,13 +428,13 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
       const secondaryApp = initializeApp(app.options, secondaryAppName);
       const secondaryAuth = getSecondaryAuth(secondaryApp);
 
-      // Generate or clean username (lowercase alphanumeric, dot, dash)
+      // Generate or clean username (strips accents: Célia -> celia)
       const rawUser =
         username && username.trim().length > 0
           ? username.trim()
-          : displayName.trim().toLowerCase().split(' ')[0];
+          : displayName.trim().split(' ')[0];
       const cleanUsername =
-        rawUser.toLowerCase().replace(/[^a-z0-9._-]/g, '') || `user${Date.now().toString().slice(-4)}`;
+        sanitizeUsername(rawUser) || `user${Date.now().toString().slice(-4)}`;
 
       // Determine Auth Email: if email provided use it, otherwise use username@morumbi.app
       const authEmail =
@@ -404,6 +444,11 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
 
       const userCred = await createUserWithEmailAndPassword(secondaryAuth, authEmail, pass);
       const newUid = userCred.user.uid;
+
+      // Update Firebase Auth user displayName so it is NEVER null!
+      try {
+        await updateProfile(userCred.user, { displayName: displayName.trim() });
+      } catch {}
 
       // Save user profile in Firestore
       const targetRole: UserRole = role === 'admin' ? 'admin' : 'revendedor';
@@ -430,6 +475,33 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
       };
 
       await setDoc(doc(db, 'users', newUid), newProfile);
+
+      // CRITICAL: Always register in /usernames directory mapping
+      await setDoc(doc(db, 'usernames', cleanUsername), {
+        uid: newUid,
+        email: authEmail,
+        username: cleanUsername,
+        displayName: displayName.trim(),
+        role: targetRole,
+        simplePasswordHint: pass,
+        createdAt: new Date().toISOString(),
+      });
+
+      // Also register legacy unaccented form if different (e.g. clia for célia)
+      const rawStripped = rawUser.toLowerCase().replace(/[^a-z0-9._-]/g, '');
+      if (rawStripped && rawStripped !== cleanUsername) {
+        try {
+          await setDoc(doc(db, 'usernames', rawStripped), {
+            uid: newUid,
+            email: authEmail,
+            username: cleanUsername,
+            displayName: displayName.trim(),
+            role: targetRole,
+            simplePasswordHint: pass,
+            createdAt: new Date().toISOString(),
+          });
+        } catch {}
+      }
 
       // If registered as admin, also register in /admins collection
       if (targetRole === 'admin') {
@@ -466,13 +538,13 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
     username?: string;
     email?: string;
   }) => {
-    // Generate or clean username (lowercase alphanumeric, dot, dash)
+    // Generate clean username (strips accents: Célia -> celia)
     const rawUser =
       username && username.trim().length > 0
         ? username.trim()
-        : displayName.trim().toLowerCase().split(' ')[0];
+        : displayName.trim().split(' ')[0];
     const cleanUsername =
-      rawUser.toLowerCase().replace(/[^a-z0-9._-]/g, '') || `user${Date.now().toString().slice(-4)}`;
+      sanitizeUsername(rawUser) || `user${Date.now().toString().slice(-4)}`;
 
     // Determine Auth Email: if email provided use it, otherwise use username@morumbi.app
     const authEmail =
@@ -482,6 +554,10 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
 
     const userCred = await createUserWithEmailAndPassword(auth, authEmail, pass);
     const newUid = userCred.user.uid;
+
+    try {
+      await updateProfile(userCred.user, { displayName: displayName.trim() });
+    } catch {}
 
     const newProfile: UserProfile = {
       uid: newUid,
@@ -498,6 +574,20 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
     };
 
     await setDoc(doc(db, 'users', newUid), newProfile);
+
+    // Save in /usernames
+    try {
+      await setDoc(doc(db, 'usernames', cleanUsername), {
+        uid: newUid,
+        email: authEmail,
+        username: cleanUsername,
+        displayName: displayName.trim(),
+        role: 'revendedor',
+        simplePasswordHint: pass,
+        createdAt: new Date().toISOString(),
+      });
+    } catch {}
+
     setUserProfile(newProfile);
     try {
       localStorage.setItem(LOCAL_STORAGE_PROFILE_KEY, JSON.stringify(newProfile));
@@ -526,7 +616,7 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
       updates.phone = params.phone.trim();
     }
     if (params.username !== undefined) {
-      updates.username = params.username.toLowerCase().replace(/[^a-z0-9._-]/g, '');
+      updates.username = sanitizeUsername(params.username);
     }
     if (params.email !== undefined) {
       updates.email = params.email.trim();
@@ -549,14 +639,12 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
     await updateDoc(userDocRef, updates);
 
     // If username updated or pass updated, write to /usernames
-    const finalUsername = (
+    const finalUsername = sanitizeUsername(
       updates.username ||
       userProfile?.username ||
       (updates.email || currentUser.email)?.split('@')[0] ||
       ''
-    )
-      .toLowerCase()
-      .replace(/[^a-z0-9._-]/g, '');
+    );
 
     if (finalUsername) {
       try {

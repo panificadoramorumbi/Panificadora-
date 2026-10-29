@@ -36,6 +36,7 @@ import {
   formatPhone,
   buildWhatsAppLink,
   calculateOrderMetrics,
+  sanitizeUsername,
 } from '../../utils/formatters';
 import {
   updateUserProfile,
@@ -46,6 +47,7 @@ import {
   cleanupOrphanedHistory,
   resetAllHistoricalData,
   cleanAppKeepOnlyFrancisca,
+  cleanAppKeepOnlyAdmin,
   DEFAULT_PRICES,
 } from '../../services/dataService';
 import { useAuth } from '../../context/AuthContext';
@@ -169,6 +171,13 @@ export const ClientsView: React.FC<ClientsViewProps> = ({
     return clients.filter((c) => c.role === 'revendedor');
   }, [clients]);
 
+  const unnamedClients = useMemo(() => {
+    return resellers.filter((c) => {
+      const name = (c.displayName || '').toLowerCase().trim();
+      return name === 'revendedor' || name === 'sem nome' || name === '';
+    });
+  }, [resellers]);
+
   const filteredClients = useMemo(() => {
     if (!searchTerm.trim()) return resellers;
     const term = searchTerm.toLowerCase();
@@ -254,9 +263,9 @@ export const ClientsView: React.FC<ClientsViewProps> = ({
       return;
     }
 
-    // Generate or clean username
-    const rawUser = newUsername.trim() || newName.trim().toLowerCase().split(' ')[0];
-    const cleanUsername = rawUser.toLowerCase().replace(/[^a-z0-9._-]/g, '');
+    // Generate or clean username (strips accents: Célia -> celia)
+    const rawUser = newUsername.trim() || newName.trim().split(' ')[0];
+    const cleanUsername = sanitizeUsername(rawUser);
 
     if (!cleanUsername) {
       setFormError('Informe um Nome de Usuário válido (apenas letras minúsculas e números).');
@@ -597,9 +606,11 @@ Para acessar:
           ? Number(editCustomPriceSweet)
           : null;
 
+      const cleanUsername = sanitizeUsername(editUsername.trim() || editName.trim().split(' ')[0]);
+
       const updates: any = {
         displayName: editName.trim(),
-        username: editUsername.trim().toLowerCase().replace(/[^a-z0-9._-]/g, ''),
+        username: cleanUsername,
         phone: editPhone.trim(),
         email: editEmail.trim(),
         simplePasswordHint: editPasswordHint.trim() || '123456',
@@ -635,11 +646,32 @@ Para acessar:
     }
   };
 
-  // Run cleanup of orphaned records, reset all test data, or keep only Dona Francisca
-  const handleRunCleanup = async (type: 'orphans' | 'all' | 'francisca_only') => {
+  // Quick 1-click rename for accounts with provisional name "Revendedor"
+  const handleQuickRename = async (client: UserProfile, targetName: 'Célia' | 'Manuel') => {
+    const cleanU = targetName === 'Célia' ? 'celia' : 'manuel';
+    try {
+      await updateUserProfile(client.uid, {
+        displayName: targetName,
+        username: cleanU,
+        simplePasswordHint: client.simplePasswordHint || '123456',
+      });
+      alert(`Revendedor atualizado para "${targetName}" com sucesso!\n\n👤 Usuário de acesso: ${cleanU}\n🔑 Senha: ${client.simplePasswordHint || '123456'}`);
+    } catch (err: any) {
+      alert('Erro ao atualizar revendedor: ' + (err?.message || err));
+    }
+  };
+
+  // Run cleanup of orphaned records, reset all test data, or keep ONLY Administrator
+  const handleRunCleanup = async (type: 'orphans' | 'all' | 'admin_only' | 'francisca_only') => {
     setIsCleaningUp(true);
     try {
-      if (type === 'orphans') {
+      if (type === 'admin_only') {
+        const res = await cleanAppKeepOnlyAdmin();
+        setCleanupMessage(
+          `Limpeza concluída com sucesso! Foram excluídos ${res.deletedUsers} revendedor(es), ${res.deletedOrders} pedidos e ${res.deletedPayments} pagamentos. Apenas a sua conta de Administrador foi mantida. O aplicativo está 100% zerado e pronto para os novos cadastros!`
+        );
+        onSelectClient(null);
+      } else if (type === 'orphans') {
         const res = await cleanupOrphanedHistory();
         setCleanupMessage(
           `Limpeza concluída! Foram removidos ${res.deletedOrders} pedido(s) e ${res.deletedPayments} pagamento(s) de clientes que já tinham sido excluídos.`
@@ -712,6 +744,42 @@ Para acessar:
         </div>
       </div>
 
+      {/* Alert Banner for Fresh Start: Keep Only Admin */}
+      {resellers.length > 0 && (
+        <div className="bg-red-50 border-2 border-red-300 rounded-3xl p-5 shadow-xs flex flex-col sm:flex-row sm:items-center justify-between gap-4">
+          <div className="flex items-start sm:items-center gap-3.5">
+            <div className="w-11 h-11 rounded-2xl bg-red-800 text-white flex items-center justify-center shrink-0 shadow-xs">
+              <Trash2 className="w-5 h-5 text-amber-300" />
+            </div>
+            <div>
+              <p className="text-sm font-black text-red-950">
+                Reinício das Operações: Começar do Zero a Partir de Hoje
+              </p>
+              <p className="text-xs text-red-800 mt-0.5 leading-relaxed">
+                Você solicitou excluir todos os revendedores para começar limpo. Esta ação apaga os {resellers.length} revendedor(es) atuais e pedidos de teste, deixando <strong>apenas a sua conta de Administrador</strong> e mantendo todas as configurações de preços e regras intactas.
+              </p>
+            </div>
+          </div>
+          <button
+            type="button"
+            disabled={isCleaningUp}
+            onClick={() => {
+              if (
+                window.confirm(
+                  'ATENÇÃO: Deseja apagar todos os revendedores e pedidos de teste agora, mantendo APENAS a conta do Administrador para começar do zero hoje? Todos os novos cadastros começarão limpos.'
+                )
+              ) {
+                handleRunCleanup('admin_only');
+              }
+            }}
+            className="px-5 py-3 bg-red-800 hover:bg-red-900 active:scale-95 text-white font-black text-xs uppercase rounded-2xl shadow-md transition shrink-0 flex items-center justify-center gap-2 cursor-pointer disabled:opacity-50"
+          >
+            <Trash2 className="w-4 h-4 text-amber-300" />
+            <span>{isCleaningUp ? 'Apagando revendedores...' : 'Apagar Todos e Deixar Só Admin'}</span>
+          </button>
+        </div>
+      )}
+
       {/* Main split view: Clients List vs Selected Client Details */}
       <div className="grid grid-cols-1 lg:grid-cols-12 gap-6">
         {/* Left column: List of Resellers */}
@@ -728,6 +796,57 @@ Para acessar:
                 className="w-full pl-9 pr-3 py-2 text-xs bg-stone-50 border border-stone-200 rounded-xl focus:outline-hidden focus:ring-2 focus:ring-red-800 focus:bg-white"
               />
             </div>
+
+            {/* Quick Rename Alert for "Revendedor" accounts */}
+            {unnamedClients.length > 0 && (
+              <div className="mb-3 p-3 bg-amber-50 border-2 border-amber-300 rounded-2xl text-xs space-y-2">
+                <div className="flex items-center gap-1.5 text-amber-950 font-black">
+                  <AlertCircle className="w-4 h-4 text-amber-700 shrink-0" />
+                  <span>{unnamedClients.length} conta(s) com nome provisório &quot;Revendedor&quot;</span>
+                </div>
+                <p className="text-[11px] text-amber-900 leading-snug">
+                  Clique abaixo para definir quem é cada revendedor (Célia ou Manuel) ou exclua:
+                </p>
+                <div className="space-y-1.5 pt-0.5">
+                  {unnamedClients.map((uc) => (
+                    <div
+                      key={uc.uid}
+                      className="p-2 bg-white rounded-xl border border-amber-200 shadow-2xs space-y-1.5"
+                    >
+                      <div className="flex items-center justify-between text-[11px]">
+                        <span className="font-black text-stone-900 truncate">
+                          Login: <span className="font-mono text-red-900">{uc.username || uc.email?.split('@')[0] || 'sem usuário'}</span>
+                        </span>
+                        <button
+                          type="button"
+                          onClick={() => setClientToDelete(uc)}
+                          className="text-stone-400 hover:text-red-700 p-0.5"
+                          title="Excluir este revendedor provisório"
+                        >
+                          <Trash2 className="w-3.5 h-3.5" />
+                        </button>
+                      </div>
+                      <div className="flex items-center gap-1.5">
+                        <button
+                          type="button"
+                          onClick={() => handleQuickRename(uc, 'Célia')}
+                          className="flex-1 py-1 px-2 bg-red-800 hover:bg-red-900 active:scale-95 text-white font-black text-[10px] rounded-lg shadow-2xs transition"
+                        >
+                          Virar Célia
+                        </button>
+                        <button
+                          type="button"
+                          onClick={() => handleQuickRename(uc, 'Manuel')}
+                          className="flex-1 py-1 px-2 bg-amber-600 hover:bg-amber-700 active:scale-95 text-white font-black text-[10px] rounded-lg shadow-2xs transition"
+                        >
+                          Virar Manuel
+                        </button>
+                      </div>
+                    </div>
+                  ))}
+                </div>
+              </div>
+            )}
 
             <div className="flex items-center justify-between text-xs font-bold text-stone-500 mb-2 px-1">
               <span>Revendedores ({filteredClients.length})</span>
@@ -754,6 +873,10 @@ Para acessar:
                     .filter((o) => o.resellerId === client.uid)
                     .reduce((sum, o) => sum + (o.balanceDue || 0), 0);
 
+                  const isRevendedorProvisional =
+                    (client.displayName || '').toLowerCase().trim() === 'revendedor' ||
+                    (client.displayName || '').toLowerCase().trim() === 'sem nome';
+
                   return (
                     <div
                       key={client.uid}
@@ -775,11 +898,20 @@ Para acessar:
                           {client.displayName.charAt(0).toUpperCase()}
                         </div>
                         <div className="overflow-hidden">
-                          <p className="text-xs font-bold text-stone-900 truncate">
-                            {client.displayName}
+                          <p className="text-xs font-bold text-stone-900 truncate flex items-center gap-1.5">
+                            <span>
+                              {isRevendedorProvisional && client.username
+                                ? `${client.username.charAt(0).toUpperCase() + client.username.slice(1)}`
+                                : client.displayName}
+                            </span>
+                            {isRevendedorProvisional && (
+                              <span className="text-[9px] font-black uppercase px-1.5 py-0.2 bg-amber-200 text-amber-950 rounded-md">
+                                Provisório
+                              </span>
+                            )}
                           </p>
                           <p className="text-[11px] text-stone-500 truncate">
-                            {formatPhone(client.phone) || client.email}
+                            {formatPhone(client.phone) || client.email || (client.username ? `Usuário: ${client.username}` : '')}
                           </p>
                           <p className="text-[10px] font-bold text-amber-900 mt-0.5 truncate">
                             {client.customPriceSalty
@@ -852,6 +984,37 @@ Para acessar:
             <div className="space-y-6">
               {/* Client Info Card */}
               <div className="bg-white rounded-3xl p-6 shadow-sm border border-stone-200">
+                {/* Notice for provisional "Revendedor" account */}
+                {(selectedClient.displayName || '').toLowerCase().trim() === 'revendedor' && (
+                  <div className="mb-4 p-4 bg-amber-50 border-2 border-amber-400 rounded-2xl flex flex-col sm:flex-row items-start sm:items-center justify-between gap-3 shadow-xs">
+                    <div>
+                      <p className="text-xs font-black text-amber-950 flex items-center gap-1.5">
+                        <AlertCircle className="w-4 h-4 text-amber-700 shrink-0" />
+                        <span>Nome Provisório &quot;Revendedor&quot;</span>
+                      </p>
+                      <p className="text-[11px] text-amber-900 mt-0.5">
+                        Este cadastro foi criado com usuário <strong className="font-mono text-red-950">{selectedClient.username || selectedClient.email?.split('@')[0]}</strong>. Defina quem é este revendedor com 1 clique:
+                      </p>
+                    </div>
+                    <div className="flex items-center gap-2 shrink-0">
+                      <button
+                        type="button"
+                        onClick={() => handleQuickRename(selectedClient, 'Célia')}
+                        className="px-3.5 py-2 bg-red-800 hover:bg-red-900 active:scale-95 text-white font-black text-xs rounded-xl shadow-xs transition"
+                      >
+                        Virar Célia
+                      </button>
+                      <button
+                        type="button"
+                        onClick={() => handleQuickRename(selectedClient, 'Manuel')}
+                        className="px-3.5 py-2 bg-amber-600 hover:bg-amber-700 active:scale-95 text-white font-black text-xs rounded-xl shadow-xs transition"
+                      >
+                        Virar Manuel
+                      </button>
+                    </div>
+                  </div>
+                )}
+
                 <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4 pb-5 border-b border-stone-100">
                   <div className="flex items-center gap-4">
                     <div className="w-14 h-14 rounded-2xl bg-red-800 text-amber-300 flex items-center justify-center font-black text-xl shadow-md">
@@ -2527,11 +2690,46 @@ Para acessar:
                 Como você excluiu clientes fictícios de teste, selecione a opção desejada para que os saldos e valores fiquem 100% corretos:
               </p>
 
-              {/* Option 1: Clean only orphans */}
+              {/* Option 1: Full Clean - Keep ONLY Admin */}
+              <div className="p-4 rounded-2xl border-2 border-red-500 bg-red-50/70 space-y-2">
+                <div className="flex items-center justify-between">
+                  <h4 className="font-black text-red-950 text-xs uppercase flex items-center gap-1.5">
+                    <Trash2 className="w-4 h-4 text-red-700" />
+                    <span>1. Apagar Todos os Revendedores & Deixar Só Administrador</span>
+                  </h4>
+                  <span className="text-[10px] font-black text-white bg-red-800 px-2.5 py-0.5 rounded-full">
+                    Solicitado / Recomendado
+                  </span>
+                </div>
+                <p className="text-stone-700 leading-relaxed text-[11px]">
+                  Apaga todos os revendedores, contas provisórias e todo o histórico de testes (pedidos e pagamentos). Mantém <strong>apenas a sua conta de Administrador (dyko)</strong> e as configurações de preços da padaria intactas para começar do zero com os novos cadastros a partir de hoje!
+                </p>
+                <div className="pt-2">
+                  <button
+                    type="button"
+                    disabled={isCleaningUp}
+                    onClick={() => {
+                      if (
+                        window.confirm(
+                          'Atenção: Deseja apagar todos os revendedores cadastrados e pedidos de teste, mantendo apenas o Administrador? Todos os novos cadastros começarão do zero.'
+                        )
+                      ) {
+                        handleRunCleanup('admin_only');
+                      }
+                    }}
+                    className="w-full py-2.5 bg-red-800 hover:bg-red-900 text-white font-black text-xs uppercase rounded-xl shadow-md transition flex items-center justify-center gap-2 disabled:opacity-50 cursor-pointer"
+                  >
+                    <Trash2 className="w-3.5 h-3.5 text-amber-300" />
+                    <span>{isCleaningUp ? 'Executando limpeza...' : 'Apagar Todos os Revendedores e Deixar Só Admin'}</span>
+                  </button>
+                </div>
+              </div>
+
+              {/* Option 2: Clean only orphans */}
               <div className="p-4 rounded-2xl border border-stone-200 bg-stone-50 space-y-2">
                 <div className="flex items-center justify-between">
                   <h4 className="font-black text-stone-900 text-xs uppercase flex items-center gap-1.5">
-                    <span>1. Limpar Registros de Clientes Excluídos</span>
+                    <span>2. Limpar Registros de Clientes Excluídos</span>
                   </h4>
                   <span className="text-[10px] font-bold text-amber-800 bg-amber-100 px-2 py-0.5 rounded-full">
                     Mais Seguro
@@ -2553,11 +2751,11 @@ Para acessar:
                 </div>
               </div>
 
-              {/* Option 2: Full reset of test history */}
+              {/* Option 3: Full reset of test history */}
               <div className="p-4 rounded-2xl border border-rose-200 bg-rose-50/50 space-y-2">
                 <div className="flex items-center justify-between">
                   <h4 className="font-black text-rose-950 text-xs uppercase flex items-center gap-1.5">
-                    <span>2. Zerar Todo o Histórico de Testes</span>
+                    <span>3. Zerar Apenas os Pedidos (Manter Clientes)</span>
                   </h4>
                   <span className="text-[10px] font-bold text-rose-800 bg-rose-100 px-2 py-0.5 rounded-full">
                     Zerar Saldos para R$ 0,00
@@ -2579,37 +2777,6 @@ Para acessar:
                   >
                     <Trash2 className="w-3.5 h-3.5" />
                     <span>{isCleaningUp ? 'Zerando histórico...' : 'Zerar Todos os Pedidos e Saldos de Teste'}</span>
-                  </button>
-                </div>
-              </div>
-
-              {/* Option 3: Keep ONLY Dona Francisca and zero all values */}
-              <div className="p-4 rounded-2xl border-2 border-amber-400 bg-amber-50/70 space-y-2">
-                <div className="flex items-center justify-between">
-                  <h4 className="font-black text-amber-950 text-xs uppercase flex items-center gap-1.5">
-                    <Sparkles className="w-4 h-4 text-amber-600" />
-                    <span>3. Deixar Apenas Dona Francisca & Zerar Tudo</span>
-                  </h4>
-                  <span className="text-[10px] font-black text-amber-950 bg-amber-200 px-2 py-0.5 rounded-full">
-                    Recomendado
-                  </span>
-                </div>
-                <p className="text-stone-700 leading-relaxed text-[11px]">
-                  Apaga todos os pedidos e pagamentos de teste, remove clientes fictícios de teste e deixa apenas o cadastro da <strong>Dona Francisca</strong> com saldo R$ 0,00 para começar as vendas reais pelo <strong>Pedido #01</strong>.
-                </p>
-                <div className="pt-2">
-                  <button
-                    type="button"
-                    disabled={isCleaningUp}
-                    onClick={() => {
-                      if (window.confirm('Confirmação: Deseja apagar todos os testes, remover clientes fictícios e deixar apenas a Dona Francisca como cliente com saldo R$ 0,00? O próximo pedido será o #01.')) {
-                        handleRunCleanup('francisca_only');
-                      }
-                    }}
-                    className="w-full py-2.5 bg-red-800 hover:bg-red-900 text-white font-black text-xs uppercase rounded-xl shadow-md transition flex items-center justify-center gap-2 disabled:opacity-50 cursor-pointer"
-                  >
-                    <Trash2 className="w-3.5 h-3.5 text-amber-300" />
-                    <span>{isCleaningUp ? 'Executando limpeza...' : 'Zerar Valores e Manter Apenas Dona Francisca'}</span>
                   </button>
                 </div>
               </div>
