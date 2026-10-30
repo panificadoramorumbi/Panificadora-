@@ -11,6 +11,7 @@ import { SettlementView } from './components/admin/SettlementView';
 import { NotificationsView } from './components/admin/NotificationsView';
 import { SettingsView } from './components/admin/SettingsView';
 import { RetailOrdersView } from './components/admin/RetailOrdersView';
+import { TrashModal } from './components/admin/TrashModal';
 import { ResellerHome } from './components/reseller/ResellerHome';
 import { OfflineIndicator } from './components/OfflineIndicator';
 import {
@@ -40,6 +41,7 @@ const MainApp: React.FC = () => {
   // Client selection for "Meus Clientes" submenu
   const [selectedClientId, setSelectedClientId] = useState<string | null>(null);
   const [openNewClientModal, setOpenNewClientModal] = useState<boolean>(false);
+  const [showGlobalTrashModal, setShowGlobalTrashModal] = useState<boolean>(false);
 
   // Correction order selected from Orders view to open in Audit view
   const [orderToCorrect, setOrderToCorrect] = useState<Order | null>(null);
@@ -204,6 +206,7 @@ const MainApp: React.FC = () => {
             setAdminView('clients');
             setOpenNewClientModal(true);
           }}
+          onOpenTrash={() => setShowGlobalTrashModal(true)}
         />
 
         {/* Main Content View Container */}
@@ -315,6 +318,14 @@ const MainApp: React.FC = () => {
       </div>
 
       <OfflineIndicator />
+
+      {/* Global Trash Modal for Admin */}
+      {isAdmin && (
+        <TrashModal
+          isOpen={showGlobalTrashModal}
+          onClose={() => setShowGlobalTrashModal(false)}
+        />
+      )}
     </div>
   );
 };

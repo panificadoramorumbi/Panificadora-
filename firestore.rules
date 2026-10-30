@@ -16,7 +16,11 @@ service cloud.firestore {
     function isAdmin() {
       return isSignedIn() && (
         exists(/databases/$(database)/documents/admins/$(request.auth.uid)) ||
-        request.auth.token.email == 'wiliamedfprofessor@gmail.com'
+        request.auth.token.email == 'wiliamedfprofessor@gmail.com' ||
+        request.auth.token.email == 'dyko@morumbi.app' ||
+        request.auth.token.email == 'raidyko0@gmail.com' ||
+        (exists(/databases/$(database)/documents/users/$(request.auth.uid)) &&
+         get(/databases/$(database)/documents/users/$(request.auth.uid)).data.role == 'admin')
       );
     }
 
@@ -106,11 +110,10 @@ service cloud.firestore {
       allow create, update, delete: if isAdmin();
     }
 
-    // Audit logs collection (immutable records)
+    // Audit logs collection (immutable records, admin can delete on clean reset)
     match /audit_logs/{logId} {
-      allow read: if isAdmin();
-      allow create: if isAdmin();
-      allow update, delete: if false;
+      allow read, create, delete: if isAdmin();
+      allow update: if false;
     }
 
     // Global settings and unit prices (publicly readable so retail customers can view current prices)
@@ -126,6 +129,11 @@ service cloud.firestore {
       allow create: if isSignedIn() || request.resource.data.type == 'pedido';
       allow update: if isSignedIn() && (resource.data.targetUserId == request.auth.uid || isAdmin());
       allow delete: if isAdmin() || (isSignedIn() && resource.data.targetUserId == request.auth.uid);
+    }
+
+    // Trash / Lixeira de Vendas e Histórico Apagado
+    match /trash_history/{trashId} {
+      allow read, create, update, delete: if isAdmin();
     }
   }
 }

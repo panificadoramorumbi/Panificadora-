@@ -21,6 +21,7 @@ import {
   AuditLog,
   ProductPrices,
   InAppNotification,
+  TrashItem,
 } from '../types';
 import { calculateOrderMetrics, sanitizeUsername } from '../utils/formatters';
 
@@ -283,6 +284,44 @@ export function subscribeNotifications(
     },
     (error) => {
       handleFirestoreError(error, OperationType.LIST, 'notifications');
+    }
+  );
+
+  return unsubscribe;
+}
+
+/**
+ * Real-time Trash / Lixeira subscription
+ */
+export function subscribeTrash(onUpdate: (items: TrashItem[]) => void): () => void {
+  const collRef = collection(db, 'trash_history');
+  const q = query(collRef, orderBy('deletedAt', 'desc'));
+
+  const unsubscribe = onSnapshot(
+    q,
+    (snapshot) => {
+      const items: TrashItem[] = snapshot.docs.map((docSnap) => {
+        const d = docSnap.data();
+        return {
+          id: docSnap.id,
+          itemType: d.itemType || 'historico_cliente',
+          title: d.title || 'Histórico Apagado',
+          clientName: d.clientName || 'Cliente',
+          clientId: d.clientId || '',
+          deletedAt: d.deletedAt || new Date().toISOString(),
+          deletedBy: d.deletedBy || 'Administrador',
+          totalValue: Number(d.totalValue) || 0,
+          ordersCount: Number(d.ordersCount) || 0,
+          paymentsCount: Number(d.paymentsCount) || 0,
+          orders: Array.isArray(d.orders) ? d.orders : [],
+          payments: Array.isArray(d.payments) ? d.payments : [],
+          notes: d.notes || '',
+        };
+      });
+      onUpdate(items);
+    },
+    (error) => {
+      handleFirestoreError(error, OperationType.LIST, 'trash_history');
     }
   );
 
@@ -967,33 +1006,237 @@ export async function cleanupOrphanedHistory(): Promise<{ deletedOrders: number;
 
 /**
  * Reset all historical test orders, payments and logs (clean slate for new operations)
+ * Saves all wiped orders and payments to trash_history so the user can inspect or restore them anytime.
  */
-export async function resetAllHistoricalData(): Promise<{ deletedOrders: number; deletedPayments: number }> {
+export async function resetAllHistoricalData(adminName = 'Administrador'): Promise<{ deletedOrders: number; deletedPayments: number }> {
   try {
     let deletedOrders = 0;
     let deletedPayments = 0;
 
     const ordersSnap = await getDocs(collection(db, 'orders'));
-    for (const d of ordersSnap.docs) {
-      await deleteDoc(doc(db, 'orders', d.id));
-      deletedOrders++;
+    const paymentsSnap = await getDocs(collection(db, 'payments'));
+
+    const archivedOrders: Order[] = ordersSnap.docs.map((d) => ({ id: d.id, ...d.data() } as Order));
+    const archivedPayments: PaymentRecord[] = paymentsSnap.docs.map((d) => ({ id: d.id, ...d.data() } as PaymentRecord));
+
+    // Archive into trash_history before wiping
+    if (archivedOrders.length > 0 || archivedPayments.length > 0) {
+      try {
+        await addDoc(collection(db, 'trash_history'), {
+          itemType: 'zeramento_geral',
+          title: `Zeramento Geral (${new Date().toLocaleDateString('pt-BR')})`,
+          clientName: 'Painel Geral (Todos os Clientes)',
+          deletedAt: new Date().toISOString(),
+          deletedBy: adminName,
+          totalValue: Number(archivedOrders.reduce((sum, o) => sum + (o.finalTotal || 0), 0).toFixed(2)),
+          ordersCount: archivedOrders.length,
+          paymentsCount: archivedPayments.length,
+          orders: archivedOrders,
+          payments: archivedPayments,
+          notes: 'Histórico de vendas e pagamentos zerado pelo administrador.',
+        });
+      } catch (tErr) {
+        console.warn('Erro ao salvar na lixeira:', tErr);
+      }
     }
 
-    const paymentsSnap = await getDocs(collection(db, 'payments'));
+    for (const d of ordersSnap.docs) {
+      try {
+        await deleteDoc(doc(db, 'orders', d.id));
+        deletedOrders++;
+      } catch (err) {
+        console.warn(`Erro ao excluir pedido ${d.id}:`, err);
+      }
+    }
+
     for (const d of paymentsSnap.docs) {
-      await deleteDoc(doc(db, 'payments', d.id));
-      deletedPayments++;
+      try {
+        await deleteDoc(doc(db, 'payments', d.id));
+        deletedPayments++;
+      } catch (err) {
+        console.warn(`Erro ao excluir pagamento ${d.id}:`, err);
+      }
     }
 
     const auditSnap = await getDocs(collection(db, 'audit_logs'));
     for (const d of auditSnap.docs) {
-      await deleteDoc(doc(db, 'audit_logs', d.id));
+      try {
+        await deleteDoc(doc(db, 'audit_logs', d.id));
+      } catch (err) {
+        console.warn(`Erro ao excluir log de auditoria ${d.id}:`, err);
+      }
     }
+
+    // Also clear notifications
+    try {
+      const notifsSnap = await getDocs(collection(db, 'notifications'));
+      for (const d of notifsSnap.docs) {
+        try {
+          await deleteDoc(doc(db, 'notifications', d.id));
+        } catch (err) {
+          console.warn(`Erro ao excluir notificação ${d.id}:`, err);
+        }
+      }
+    } catch {}
 
     return { deletedOrders, deletedPayments };
   } catch (error) {
-    handleFirestoreError(error, OperationType.DELETE, 'reset');
+    console.error('Erro em resetAllHistoricalData:', error);
     return { deletedOrders: 0, deletedPayments: 0 };
+  }
+}
+
+/**
+ * Clear the entire transaction history (orders, payments, notifications) of a specific client.
+ * Leaves the client user account completely intact (same name, username, password hint, and custom prices),
+ * but resets their pending balance, orders, and payments to R$ 0,00.
+ * Automatically archives the wiped orders and payments to trash_history so the admin can inspect them anytime.
+ */
+export async function clearClientHistory(
+  clientId: string,
+  clientName = 'Revendedor',
+  adminName = 'Administrador'
+): Promise<{ deletedOrders: number; deletedPayments: number }> {
+  try {
+    let deletedOrders = 0;
+    let deletedPayments = 0;
+
+    // 1. Fetch orders and payments to archive in trash_history first
+    const ordersSnap = await getDocs(query(collection(db, 'orders'), where('resellerId', '==', clientId)));
+    const paymentsSnap = await getDocs(query(collection(db, 'payments'), where('resellerId', '==', clientId)));
+
+    const archivedOrders: Order[] = ordersSnap.docs.map((d) => ({ id: d.id, ...d.data() } as Order));
+    const archivedPayments: PaymentRecord[] = paymentsSnap.docs.map((d) => ({ id: d.id, ...d.data() } as PaymentRecord));
+
+    // Archive into trash_history before wiping
+    if (archivedOrders.length > 0 || archivedPayments.length > 0) {
+      try {
+        await addDoc(collection(db, 'trash_history'), {
+          itemType: 'historico_cliente',
+          title: `Histórico Zerado - ${clientName}`,
+          clientName,
+          clientId,
+          deletedAt: new Date().toISOString(),
+          deletedBy: adminName,
+          totalValue: Number(archivedOrders.reduce((sum, o) => sum + (o.finalTotal || 0), 0).toFixed(2)),
+          ordersCount: archivedOrders.length,
+          paymentsCount: archivedPayments.length,
+          orders: archivedOrders,
+          payments: archivedPayments,
+          notes: `Histórico zerado pelo administrador. Saldo de ${clientName} voltou a R$ 0,00.`,
+        });
+      } catch (tErr) {
+        console.warn('Erro ao salvar na lixeira:', tErr);
+      }
+    }
+
+    // 2. Delete all orders for this specific reseller
+    for (const d of ordersSnap.docs) {
+      try {
+        // Remove audit logs for this order
+        try {
+          const auditSnap = await getDocs(query(collection(db, 'audit_logs'), where('orderId', '==', d.id)));
+          for (const a of auditSnap.docs) {
+            try {
+              await deleteDoc(doc(db, 'audit_logs', a.id));
+            } catch {}
+          }
+        } catch {}
+
+        await deleteDoc(doc(db, 'orders', d.id));
+        deletedOrders++;
+      } catch (err) {
+        console.warn(`Erro ao apagar pedido ${d.id} do cliente ${clientId}:`, err);
+      }
+    }
+
+    // 3. Delete all payments for this specific reseller
+    for (const d of paymentsSnap.docs) {
+      try {
+        await deleteDoc(doc(db, 'payments', d.id));
+        deletedPayments++;
+      } catch (err) {
+        console.warn(`Erro ao apagar pagamento ${d.id} do cliente ${clientId}:`, err);
+      }
+    }
+
+    // 4. Delete notifications for this client
+    try {
+      const notifsSnap = await getDocs(query(collection(db, 'notifications'), where('targetUserId', '==', clientId)));
+      for (const d of notifsSnap.docs) {
+        try {
+          await deleteDoc(doc(db, 'notifications', d.id));
+        } catch {}
+      }
+    } catch {}
+
+    return { deletedOrders, deletedPayments };
+  } catch (error) {
+    console.error('Erro em clearClientHistory:', error);
+    return { deletedOrders: 0, deletedPayments: 0 };
+  }
+}
+
+/**
+ * Restore an item from trash back into active orders and payments
+ */
+export async function restoreTrashItem(trashItem: TrashItem): Promise<void> {
+  try {
+    // 1. Re-insert orders
+    for (const order of trashItem.orders) {
+      try {
+        await setDoc(doc(db, 'orders', order.id), order);
+      } catch (err) {
+        console.warn(`Erro ao restaurar pedido ${order.id}:`, err);
+      }
+    }
+
+    // 2. Re-insert payments
+    for (const payment of trashItem.payments) {
+      try {
+        await setDoc(doc(db, 'payments', payment.id), payment);
+      } catch (err) {
+        console.warn(`Erro ao restaurar pagamento ${payment.id}:`, err);
+      }
+    }
+
+    // 3. Remove from trash_history
+    await deleteDoc(doc(db, 'trash_history', trashItem.id));
+  } catch (error) {
+    handleFirestoreError(error, OperationType.WRITE, `trash_history/${trashItem.id}`);
+  }
+}
+
+/**
+ * Permanently delete a single trash record
+ */
+export async function permanentlyDeleteTrashItem(trashId: string): Promise<void> {
+  try {
+    await deleteDoc(doc(db, 'trash_history', trashId));
+  } catch (error) {
+    handleFirestoreError(error, OperationType.DELETE, `trash_history/${trashId}`);
+  }
+}
+
+/**
+ * Empty the entire trash permanently
+ */
+export async function emptyTrash(): Promise<number> {
+  try {
+    let deletedCount = 0;
+    const snap = await getDocs(collection(db, 'trash_history'));
+    for (const d of snap.docs) {
+      try {
+        await deleteDoc(doc(db, 'trash_history', d.id));
+        deletedCount++;
+      } catch (err) {
+        console.warn(`Erro ao esvaziar item ${d.id} da lixeira:`, err);
+      }
+    }
+    return deletedCount;
+  } catch (error) {
+    console.error('Erro em emptyTrash:', error);
+    return 0;
   }
 }
 
@@ -1016,24 +1259,46 @@ export async function cleanAppKeepOnlyFrancisca(): Promise<{
     // 1. Delete all orders (so all balances become 0,00)
     const ordersSnap = await getDocs(collection(db, 'orders'));
     for (const d of ordersSnap.docs) {
-      await deleteDoc(doc(db, 'orders', d.id));
-      deletedOrders++;
+      try {
+        await deleteDoc(doc(db, 'orders', d.id));
+        deletedOrders++;
+      } catch (err) {
+        console.warn(`Erro ao excluir pedido ${d.id}:`, err);
+      }
     }
 
     // 2. Delete all payments
     const paymentsSnap = await getDocs(collection(db, 'payments'));
     for (const d of paymentsSnap.docs) {
-      await deleteDoc(doc(db, 'payments', d.id));
-      deletedPayments++;
+      try {
+        await deleteDoc(doc(db, 'payments', d.id));
+        deletedPayments++;
+      } catch (err) {
+        console.warn(`Erro ao excluir pagamento ${d.id}:`, err);
+      }
     }
 
     // 3. Delete all audit logs
     const auditSnap = await getDocs(collection(db, 'audit_logs'));
     for (const d of auditSnap.docs) {
-      await deleteDoc(doc(db, 'audit_logs', d.id));
+      try {
+        await deleteDoc(doc(db, 'audit_logs', d.id));
+      } catch (err) {
+        console.warn(`Erro ao excluir audit_log ${d.id}:`, err);
+      }
     }
 
-    // 4. Inspect users: find or create Dona Francisca, delete any other fictitious clients
+    // 4. Delete notifications
+    try {
+      const notifsSnap = await getDocs(collection(db, 'notifications'));
+      for (const d of notifsSnap.docs) {
+        try {
+          await deleteDoc(doc(db, 'notifications', d.id));
+        } catch {}
+      }
+    } catch {}
+
+    // 5. Inspect users: find or create Dona Francisca, delete any other fictitious clients
     const usersSnap = await getDocs(collection(db, 'users'));
     let franciscaDoc = usersSnap.docs.find((d) => {
       const data = d.data();
@@ -1046,49 +1311,63 @@ export async function cleanAppKeepOnlyFrancisca(): Promise<{
 
     if (franciscaDoc) {
       franciscaUid = franciscaDoc.id;
-      // Ensure clean and verified profile for Dona Francisca
-      await updateDoc(doc(db, 'users', franciscaUid), {
-        displayName: 'Dona Francisca',
-        username: franciscaDoc.data().username || 'francisca',
-        simplePasswordHint: franciscaDoc.data().simplePasswordHint || '123456',
-        role: 'revendedor',
-        clientType: 'revendedor',
-        active: true,
-        updatedAt: new Date().toISOString(),
-      });
+      try {
+        await updateDoc(doc(db, 'users', franciscaUid), {
+          displayName: 'Dona Francisca',
+          username: franciscaDoc.data().username || 'francisca',
+          simplePasswordHint: franciscaDoc.data().simplePasswordHint || '123456',
+          role: 'revendedor',
+          clientType: 'revendedor',
+          active: true,
+          updatedAt: new Date().toISOString(),
+        });
+      } catch {}
     } else {
-      // Create Dona Francisca profile
       franciscaUid = 'revendedor_francisca';
-      await setDoc(doc(db, 'users', franciscaUid), {
-        uid: franciscaUid,
-        displayName: 'Dona Francisca',
-        username: 'francisca',
-        simplePasswordHint: '123456',
-        email: 'francisca@morumbi.app',
-        phone: '',
-        role: 'revendedor',
-        clientType: 'revendedor',
-        active: true,
-        createdAt: new Date().toISOString(),
-        notificationPreference: 'both',
-      });
+      try {
+        await setDoc(doc(db, 'users', franciscaUid), {
+          uid: franciscaUid,
+          displayName: 'Dona Francisca',
+          username: 'francisca',
+          simplePasswordHint: '123456',
+          email: 'francisca@morumbi.app',
+          phone: '',
+          role: 'revendedor',
+          clientType: 'revendedor',
+          active: true,
+          createdAt: new Date().toISOString(),
+          notificationPreference: 'both',
+        });
+      } catch {}
     }
 
-    // 5. Delete all other test clients (protecting admin and Dona Francisca)
+    // 6. Delete all other test clients (protecting admin and Dona Francisca)
     for (const d of usersSnap.docs) {
       const data = d.data();
-      const isAdm = data.role === 'admin' || (data.email && data.email.includes('wiliamedfprofessor'));
+      const isAdm =
+        data.role === 'admin' ||
+        d.id === 'admin' ||
+        d.id === 'administrador' ||
+        (data.email && data.email.toLowerCase().includes('wiliamedfprofessor')) ||
+        (data.email && data.email.toLowerCase().includes('dyko')) ||
+        (data.email && data.email.toLowerCase().includes('raidyko')) ||
+        (data.username && data.username.toLowerCase() === 'dyko') ||
+        (data.username && data.username.toLowerCase() === 'admin');
       const isFrancisca = d.id === franciscaUid;
 
       if (!isAdm && !isFrancisca) {
-        await deleteDoc(doc(db, 'users', d.id));
-        deletedUsers++;
+        try {
+          await deleteDoc(doc(db, 'users', d.id));
+          deletedUsers++;
+        } catch (err) {
+          console.warn(`Erro ao excluir usuário ${d.id}:`, err);
+        }
       }
     }
 
     return { deletedOrders, deletedPayments, deletedUsers, franciscaUid };
   } catch (error) {
-    handleFirestoreError(error, OperationType.DELETE, 'cleanAppKeepOnlyFrancisca');
+    console.error('Erro em cleanAppKeepOnlyFrancisca:', error);
     return { deletedOrders: 0, deletedPayments: 0, deletedUsers: 0, franciscaUid: '' };
   }
 }
@@ -1111,68 +1390,148 @@ export async function cleanAppKeepOnlyAdmin(): Promise<{
     let deletedUsers = 0;
     let deletedUsernames = 0;
 
+    // 0. Archive existing orders and payments into trash_history before wiping
+    try {
+      const preOrdersSnap = await getDocs(collection(db, 'orders'));
+      const prePaymentsSnap = await getDocs(collection(db, 'payments'));
+      const archivedOrders: Order[] = preOrdersSnap.docs.map((d) => ({ id: d.id, ...d.data() } as Order));
+      const archivedPayments: PaymentRecord[] = prePaymentsSnap.docs.map((d) => ({ id: d.id, ...d.data() } as PaymentRecord));
+
+      if (archivedOrders.length > 0 || archivedPayments.length > 0) {
+        await addDoc(collection(db, 'trash_history'), {
+          itemType: 'zeramento_geral',
+          title: `Reinício do Sistema - Deixar Só Administrador (${new Date().toLocaleDateString('pt-BR')})`,
+          clientName: 'Painel Geral (Todos os Revendedores Anteriores)',
+          deletedAt: new Date().toISOString(),
+          deletedBy: 'Administrador (dyko)',
+          totalValue: Number(archivedOrders.reduce((sum, o) => sum + (o.finalTotal || 0), 0).toFixed(2)),
+          ordersCount: archivedOrders.length,
+          paymentsCount: archivedPayments.length,
+          orders: archivedOrders,
+          payments: archivedPayments,
+          notes: 'Histórico arquivado automaticamente antes de reiniciar o aplicativo para começar do zero com novos clientes.',
+        });
+      }
+    } catch (tErr) {
+      console.warn('Erro ao arquivar na lixeira antes de limpar:', tErr);
+    }
+
     // 1. Delete all orders
-    const ordersSnap = await getDocs(collection(db, 'orders'));
-    for (const d of ordersSnap.docs) {
-      await deleteDoc(doc(db, 'orders', d.id));
-      deletedOrders++;
+    try {
+      const ordersSnap = await getDocs(collection(db, 'orders'));
+      for (const d of ordersSnap.docs) {
+        try {
+          await deleteDoc(doc(db, 'orders', d.id));
+          deletedOrders++;
+        } catch (err) {
+          console.warn(`Falha ao excluir pedido ${d.id}:`, err);
+        }
+      }
+    } catch (err) {
+      console.warn('Erro ao ler orders para exclusão:', err);
     }
 
     // 2. Delete all payments
-    const paymentsSnap = await getDocs(collection(db, 'payments'));
-    for (const d of paymentsSnap.docs) {
-      await deleteDoc(doc(db, 'payments', d.id));
-      deletedPayments++;
+    try {
+      const paymentsSnap = await getDocs(collection(db, 'payments'));
+      for (const d of paymentsSnap.docs) {
+        try {
+          await deleteDoc(doc(db, 'payments', d.id));
+          deletedPayments++;
+        } catch (err) {
+          console.warn(`Falha ao excluir pagamento ${d.id}:`, err);
+        }
+      }
+    } catch (err) {
+      console.warn('Erro ao ler payments para exclusão:', err);
     }
 
     // 3. Delete all notifications
-    const notifsSnap = await getDocs(collection(db, 'notifications'));
-    for (const d of notifsSnap.docs) {
-      await deleteDoc(doc(db, 'notifications', d.id));
+    try {
+      const notifsSnap = await getDocs(collection(db, 'notifications'));
+      for (const d of notifsSnap.docs) {
+        try {
+          await deleteDoc(doc(db, 'notifications', d.id));
+        } catch (err) {
+          console.warn(`Falha ao excluir notificação ${d.id}:`, err);
+        }
+      }
+    } catch (err) {
+      console.warn('Erro ao ler notifications para exclusão:', err);
     }
 
     // 4. Delete all audit logs
-    const auditSnap = await getDocs(collection(db, 'audit_logs'));
-    for (const d of auditSnap.docs) {
-      await deleteDoc(doc(db, 'audit_logs', d.id));
+    try {
+      const auditSnap = await getDocs(collection(db, 'audit_logs'));
+      for (const d of auditSnap.docs) {
+        try {
+          await deleteDoc(doc(db, 'audit_logs', d.id));
+        } catch (err) {
+          console.warn(`Falha ao excluir audit_log ${d.id}:`, err);
+        }
+      }
+    } catch (err) {
+      console.warn('Erro ao ler audit_logs para exclusão:', err);
     }
 
     // 5. Delete all users except administrator
-    const usersSnap = await getDocs(collection(db, 'users'));
-    for (const d of usersSnap.docs) {
-      const data = d.data();
-      const isAdm =
-        data.role === 'admin' ||
-        (data.email && data.email.toLowerCase().includes('wiliamedfprofessor')) ||
-        (data.email && data.email.toLowerCase() === 'dyko@morumbi.app') ||
-        (data.username && data.username.toLowerCase() === 'dyko');
+    try {
+      const usersSnap = await getDocs(collection(db, 'users'));
+      for (const d of usersSnap.docs) {
+        const data = d.data();
+        const isAdm =
+          data.role === 'admin' ||
+          d.id === 'admin' ||
+          d.id === 'administrador' ||
+          (data.email && data.email.toLowerCase().includes('wiliamedfprofessor')) ||
+          (data.email && data.email.toLowerCase().includes('dyko')) ||
+          (data.email && data.email.toLowerCase().includes('raidyko')) ||
+          (data.username && data.username.toLowerCase() === 'dyko') ||
+          (data.username && data.username.toLowerCase() === 'admin');
 
-      if (!isAdm) {
-        await deleteDoc(doc(db, 'users', d.id));
-        deletedUsers++;
+        if (!isAdm) {
+          try {
+            await deleteDoc(doc(db, 'users', d.id));
+            deletedUsers++;
+          } catch (err) {
+            console.warn(`Falha ao excluir usuário ${d.id}:`, err);
+          }
+        }
       }
+    } catch (err) {
+      console.warn('Erro ao ler users para exclusão:', err);
     }
 
     // 6. Delete all username directory records except dyko and admin
-    const usernamesSnap = await getDocs(collection(db, 'usernames'));
-    for (const d of usernamesSnap.docs) {
-      const uId = d.id.toLowerCase();
-      const uData = d.data();
-      const isAdm =
-        uId === 'dyko' ||
-        uId === 'admin' ||
-        uData.role === 'admin' ||
-        (uData.email && uData.email.toLowerCase().includes('wiliamedfprofessor'));
+    try {
+      const usernamesSnap = await getDocs(collection(db, 'usernames'));
+      for (const d of usernamesSnap.docs) {
+        const uId = d.id.toLowerCase();
+        const uData = d.data();
+        const isAdm =
+          uId === 'dyko' ||
+          uId === 'admin' ||
+          uData.role === 'admin' ||
+          (uData.email && uData.email.toLowerCase().includes('wiliamedfprofessor')) ||
+          (uData.email && uData.email.toLowerCase().includes('dyko')) ||
+          (uData.email && uData.email.toLowerCase().includes('raidyko'));
 
-      if (!isAdm) {
-        await deleteDoc(doc(db, 'usernames', d.id));
-        deletedUsernames++;
+        if (!isAdm) {
+          try {
+            await deleteDoc(doc(db, 'usernames', d.id));
+            deletedUsernames++;
+          } catch (err) {
+            console.warn(`Falha ao excluir username ${d.id}:`, err);
+          }
+        }
       }
+    } catch (err) {
+      console.warn('Erro ao ler usernames para exclusão:', err);
     }
 
     return { deletedOrders, deletedPayments, deletedUsers, deletedUsernames };
   } catch (error) {
-    handleFirestoreError(error, OperationType.DELETE, 'cleanAppKeepOnlyAdmin');
+    console.error('Erro geral em cleanAppKeepOnlyAdmin:', error);
     return { deletedOrders: 0, deletedPayments: 0, deletedUsers: 0, deletedUsernames: 0 };
   }
 }

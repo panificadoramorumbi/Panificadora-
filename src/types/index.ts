@@ -124,3 +124,19 @@ export interface InAppNotification {
   orderNumber?: string;
   resellerId?: string;
 }
+
+export interface TrashItem {
+  id: string;
+  itemType: 'pedido' | 'pagamento' | 'historico_cliente' | 'zeramento_geral';
+  title: string;
+  clientName: string;
+  clientId?: string;
+  deletedAt: string;
+  deletedBy?: string;
+  totalValue: number;
+  ordersCount: number;
+  paymentsCount: number;
+  orders: Order[];
+  payments: PaymentRecord[];
+  notes?: string;
+}

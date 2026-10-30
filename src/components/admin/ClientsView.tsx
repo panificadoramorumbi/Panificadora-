@@ -27,8 +27,11 @@ import {
   Sparkles,
   Trash2,
   PlusCircle,
+  RotateCcw,
+  Archive,
 } from 'lucide-react';
 import { UserProfile, Order, PaymentRecord, NotificationPreference, ProductPrices } from '../../types';
+import { TrashModal } from './TrashModal';
 import {
   formatCurrency,
   formatDate,
@@ -46,6 +49,7 @@ import {
   sendNotification,
   cleanupOrphanedHistory,
   resetAllHistoricalData,
+  clearClientHistory,
   cleanAppKeepOnlyFrancisca,
   cleanAppKeepOnlyAdmin,
   DEFAULT_PRICES,
@@ -78,6 +82,7 @@ export const ClientsView: React.FC<ClientsViewProps> = ({
   const [searchTerm, setSearchTerm] = useState('');
   const [showNewModal, setShowNewModal] = useState(openNewModalInitially);
   const [showEditModal, setShowEditModal] = useState(false);
+  const [showTrashModal, setShowTrashModal] = useState(false);
   const [editingClient, setEditingClient] = useState<UserProfile | null>(null);
 
   // Admin record leftovers state (Patrão lança sobras pelo cliente)
@@ -118,6 +123,11 @@ export const ClientsView: React.FC<ClientsViewProps> = ({
   // Client deletion state
   const [clientToDelete, setClientToDelete] = useState<UserProfile | null>(null);
   const [isDeleting, setIsDeleting] = useState(false);
+
+  // Client history reset state (Zerar histórico e saldo deste cliente)
+  const [clientToClearHistory, setClientToClearHistory] = useState<UserProfile | null>(null);
+  const [isClearingClientHistory, setIsClearingClientHistory] = useState(false);
+  const [clientHistoryClearedMsg, setClientHistoryClearedMsg] = useState<string | null>(null);
 
   // Place order on behalf of client state
   const [clientForOrder, setClientForOrder] = useState<UserProfile | null>(null);
@@ -694,6 +704,26 @@ Para acessar:
     }
   };
 
+  // Clear single client history (orders and payments reset to R$ 0,00)
+  const handleClearClientHistory = async () => {
+    if (!clientToClearHistory) return;
+    setIsClearingClientHistory(true);
+    try {
+      const res = await clearClientHistory(clientToClearHistory.uid);
+      setClientHistoryClearedMsg(
+        `Histórico de ${clientToClearHistory.displayName} foi zerado com sucesso! ${res.deletedOrders} pedido(s) e ${res.deletedPayments} pagamento(s) foram apagados. O saldo pendente voltou para R$ 0,00.`
+      );
+      setTimeout(() => {
+        setClientToClearHistory(null);
+        setClientHistoryClearedMsg(null);
+      }, 2500);
+    } catch (err: any) {
+      alert('Erro ao zerar histórico do cliente: ' + (err?.message || err));
+    } finally {
+      setIsClearingClientHistory(false);
+    }
+  };
+
   const handleCloseNewModal = () => {
     setShowNewModal(false);
     onCloseNewModal?.();
@@ -716,6 +746,17 @@ Para acessar:
         </div>
 
         <div className="flex flex-wrap items-center gap-2.5">
+          {/* Lixeira de Vendas Button */}
+          <button
+            type="button"
+            onClick={() => setShowTrashModal(true)}
+            className="bg-stone-900 hover:bg-stone-800 text-white font-bold text-xs uppercase px-3.5 py-3 rounded-xl border border-stone-700 transition flex items-center gap-2 shrink-0 cursor-pointer shadow-xs active:scale-95"
+            title="Visualizar lixeira com vendas e históricos apagados"
+          >
+            <Archive className="w-4 h-4 text-amber-400" />
+            <span>Lixeira de Vendas</span>
+          </button>
+
           {/* Cleanup Test Data Button */}
           <button
             type="button"
@@ -723,7 +764,7 @@ Para acessar:
               setCleanupMessage(null);
               setShowCleanupModal(true);
             }}
-            className="bg-stone-100 hover:bg-stone-200 text-stone-700 font-bold text-xs uppercase px-3.5 py-3 rounded-xl border border-stone-300 transition flex items-center gap-2 shrink-0"
+            className="bg-stone-100 hover:bg-stone-200 text-stone-700 font-bold text-xs uppercase px-3.5 py-3 rounded-xl border border-stone-300 transition flex items-center gap-2 shrink-0 cursor-pointer"
             title="Limpar pedidos e pagamentos de clientes excluídos ou zerar histórico de teste"
           >
             <Trash2 className="w-4 h-4 text-stone-500" />
@@ -736,7 +777,7 @@ Para acessar:
               setFormSuccess(null);
               setShowNewModal(true);
             }}
-            className="bg-red-800 hover:bg-red-900 text-white font-bold text-xs uppercase px-4 py-3 rounded-xl shadow-md transition flex items-center gap-2 shrink-0"
+            className="bg-red-800 hover:bg-red-900 text-white font-bold text-xs uppercase px-4 py-3 rounded-xl shadow-md transition flex items-center gap-2 shrink-0 cursor-pointer"
           >
             <UserPlus className="w-4 h-4" />
             <span>Cadastrar Revendedor</span>
@@ -933,6 +974,18 @@ Para acessar:
                             title="Enviar notificação na barra do celular deste cliente"
                           >
                             <Bell className="w-3.5 h-3.5" />
+                          </button>
+                          <button
+                            type="button"
+                            onClick={(e) => {
+                              e.stopPropagation();
+                              setClientHistoryClearedMsg(null);
+                              setClientToClearHistory(client);
+                            }}
+                            className="p-1 rounded-md text-stone-400 hover:text-amber-800 hover:bg-amber-100 transition"
+                            title="Zerar histórico de pedidos e pagamentos deste cliente"
+                          >
+                            <RotateCcw className="w-3.5 h-3.5 text-amber-700" />
                           </button>
                           <span
                             className={`inline-block px-2 py-0.5 rounded-full text-[10px] font-bold ${
@@ -1224,6 +1277,19 @@ Para acessar:
                       }`}
                     >
                       {selectedClient.active ? 'Desativar' : 'Reativar'}
+                    </button>
+
+                    <button
+                      type="button"
+                      onClick={() => {
+                        setClientHistoryClearedMsg(null);
+                        setClientToClearHistory(selectedClient);
+                      }}
+                      className="px-3 py-2 rounded-xl text-xs font-black border border-amber-300 text-amber-950 bg-amber-50 hover:bg-amber-100 transition flex items-center gap-1.5 cursor-pointer shadow-2xs"
+                      title="Zerar todos os pedidos e pagamentos deste revendedor mantendo o cadastro ativo com saldo R$ 0,00"
+                    >
+                      <RotateCcw className="w-3.5 h-3.5 text-amber-700" />
+                      <span>Zerar Histórico deste Cliente</span>
                     </button>
 
                     <button
@@ -1857,6 +1923,86 @@ Para acessar:
                 <Trash2 className="w-3.5 h-3.5" />
                 <span>{isDeleting ? 'Excluindo...' : 'Sim, Excluir Definitivamente'}</span>
               </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* Modal: Zerar Histórico do Cliente (Zerar Pedidos e Saldo para R$ 0,00) */}
+      {clientToClearHistory && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 backdrop-blur-xs p-4 overflow-y-auto">
+          <div className="w-full max-w-md bg-white rounded-3xl p-6 sm:p-7 shadow-2xl border border-amber-300 my-8">
+            <div className="flex items-center gap-3 pb-3 border-b border-stone-100">
+              <div className="w-10 h-10 rounded-2xl bg-amber-100 text-amber-800 flex items-center justify-center shrink-0">
+                <RotateCcw className="w-5 h-5" />
+              </div>
+              <div>
+                <h3 className="text-base font-black text-stone-900">Zerar Histórico do Cliente</h3>
+                <p className="text-xs text-amber-700 font-semibold">{clientToClearHistory.displayName}</p>
+              </div>
+            </div>
+
+            {clientHistoryClearedMsg ? (
+              <div className="mt-4 p-4 rounded-2xl bg-emerald-50 border border-emerald-200 text-xs text-emerald-900 font-bold space-y-1">
+                <div className="flex items-center gap-2">
+                  <CheckCircle className="w-4 h-4 text-emerald-600 shrink-0" />
+                  <span className="text-sm font-black text-emerald-950">Histórico Zerado!</span>
+                </div>
+                <p className="leading-relaxed text-emerald-800">{clientHistoryClearedMsg}</p>
+              </div>
+            ) : (
+              <div className="mt-4 space-y-3 text-xs text-stone-600">
+                <p>
+                  Deseja apagar todo o histórico de pedidos e pagamentos de{' '}
+                  <strong className="text-stone-950 font-black">{clientToClearHistory.displayName}</strong>?
+                </p>
+
+                <div className="bg-amber-50/70 p-3.5 rounded-2xl border border-amber-200 space-y-2 text-[11px] text-amber-950">
+                  <p className="font-extrabold uppercase text-[10px] text-amber-900">
+                    O que vai acontecer:
+                  </p>
+                  <ul className="space-y-1.5 list-disc list-inside text-stone-700">
+                    <li>
+                      O saldo devedor deste revendedor voltará para <strong>R$ 0,00</strong>.
+                    </li>
+                    <li>Todos os pedidos antigos e sobras registradas dele serão removidos.</li>
+                    <li>Todos os comprovantes de pagamento dele serão apagados.</li>
+                    <li>
+                      <strong>O cadastro continua ativo</strong> com o mesmo usuário, senha e preços fixos personalizados.
+                    </li>
+                  </ul>
+                </div>
+
+                <p className="text-[11px] text-stone-500 italic">
+                  * Use esta opção quando quiser zerar a conta deste cliente sem precisar cadastrá-lo novamente.
+                </p>
+              </div>
+            )}
+
+            <div className="mt-6 flex items-center justify-end gap-2.5">
+              <button
+                type="button"
+                disabled={isClearingClientHistory}
+                onClick={() => {
+                  setClientToClearHistory(null);
+                  setClientHistoryClearedMsg(null);
+                }}
+                className="px-4 py-2.5 text-xs font-bold text-stone-600 hover:text-stone-900 rounded-xl"
+              >
+                {clientHistoryClearedMsg ? 'Fechar' : 'Cancelar'}
+              </button>
+
+              {!clientHistoryClearedMsg && (
+                <button
+                  type="button"
+                  disabled={isClearingClientHistory}
+                  onClick={handleClearClientHistory}
+                  className="px-5 py-2.5 bg-amber-600 hover:bg-amber-700 active:scale-95 text-white text-xs font-black uppercase rounded-xl shadow-md transition disabled:opacity-50 flex items-center gap-2 cursor-pointer"
+                >
+                  <RotateCcw className="w-3.5 h-3.5" />
+                  <span>{isClearingClientHistory ? 'Zerando histórico...' : 'Sim, Zerar Histórico deste Cliente'}</span>
+                </button>
+              )}
             </div>
           </div>
         </div>
@@ -2686,6 +2832,29 @@ Para acessar:
             )}
 
             <div className="mt-5 space-y-4 text-xs">
+              {/* Lixeira Info Banner */}
+              <div className="p-3.5 bg-gradient-to-r from-stone-900 to-red-950 text-white rounded-2xl flex items-center justify-between gap-3 shadow-sm border border-stone-800">
+                <div className="flex items-center gap-2.5">
+                  <div className="w-8 h-8 rounded-xl bg-amber-400 text-stone-950 flex items-center justify-center font-black shrink-0">
+                    <Archive className="w-4 h-4" />
+                  </div>
+                  <div>
+                    <p className="font-black text-xs text-white">Lixeira de Segurança Ativa</p>
+                    <p className="text-[11px] text-stone-300">Todas as vendas apagadas são salvas na lixeira e podem ser restauradas.</p>
+                  </div>
+                </div>
+                <button
+                  type="button"
+                  onClick={() => {
+                    setShowCleanupModal(false);
+                    setShowTrashModal(true);
+                  }}
+                  className="px-3 py-1.5 rounded-xl bg-amber-400 hover:bg-amber-300 text-stone-950 font-black text-[11px] uppercase shrink-0 transition cursor-pointer"
+                >
+                  Abrir Lixeira
+                </button>
+              </div>
+
               <p className="text-stone-600">
                 Como você excluiu clientes fictícios de teste, selecione a opção desejada para que os saldos e valores fiquem 100% corretos:
               </p>
@@ -2778,6 +2947,55 @@ Para acessar:
                     <Trash2 className="w-3.5 h-3.5" />
                     <span>{isCleaningUp ? 'Zerando histórico...' : 'Zerar Todos os Pedidos e Saldos de Teste'}</span>
                   </button>
+                </div>
+              </div>
+
+              {/* Option 4: Client by Client Wipe */}
+              <div className="p-4 rounded-2xl border border-amber-200 bg-amber-50/60 space-y-2.5">
+                <div className="flex items-center justify-between">
+                  <h4 className="font-black text-amber-950 text-xs uppercase flex items-center gap-1.5">
+                    <RotateCcw className="w-4 h-4 text-amber-700" />
+                    <span>4. Zerar Histórico Cliente por Cliente</span>
+                  </h4>
+                  <span className="text-[10px] font-bold text-amber-900 bg-amber-200 px-2 py-0.5 rounded-full">
+                    Individual
+                  </span>
+                </div>
+                <p className="text-stone-700 leading-relaxed text-[11px]">
+                  Selecione o cliente que deseja zerar individualmente. Apenas os pedidos e pagamentos dele serão apagados, deixando o saldo dele em <strong>R$ 0,00</strong>:
+                </p>
+
+                <div className="space-y-1.5 max-h-48 overflow-y-auto pr-1">
+                  {resellers.map((reseller) => {
+                    const clientOrders = orders.filter((o) => o.resellerId === reseller.uid);
+                    const pending = clientOrders.reduce((sum, o) => sum + (o.balanceDue || 0), 0);
+
+                    return (
+                      <div
+                        key={reseller.uid}
+                        className="p-2 bg-white rounded-xl border border-amber-200/80 flex items-center justify-between text-xs shadow-2xs"
+                      >
+                        <div>
+                          <p className="font-black text-stone-900">{reseller.displayName}</p>
+                          <p className="text-[10px] text-stone-500">
+                            {clientOrders.length} pedido(s) • Pendente: <strong className={pending > 0 ? 'text-rose-700' : 'text-emerald-700'}>{formatCurrency(pending)}</strong>
+                          </p>
+                        </div>
+                        <button
+                          type="button"
+                          onClick={() => {
+                            setShowCleanupModal(false);
+                            setClientHistoryClearedMsg(null);
+                            setClientToClearHistory(reseller);
+                          }}
+                          className="px-2.5 py-1 bg-amber-500 hover:bg-amber-600 active:scale-95 text-stone-950 font-black text-[10px] uppercase rounded-lg shadow-2xs transition flex items-center gap-1 cursor-pointer"
+                        >
+                          <RotateCcw className="w-3 h-3 text-stone-950" />
+                          <span>Zerar Este</span>
+                        </button>
+                      </div>
+                    );
+                  })}
                 </div>
               </div>
 
@@ -2990,6 +3208,11 @@ Para acessar:
           </div>
         </div>
       )}
+      {/* Modal Lixeira de Vendas */}
+      <TrashModal
+        isOpen={showTrashModal}
+        onClose={() => setShowTrashModal(false)}
+      />
     </div>
   );
 };

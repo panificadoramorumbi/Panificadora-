@@ -20,6 +20,7 @@ import {
   DollarSign,
   TrendingUp,
   UserCog,
+  Archive,
 } from 'lucide-react';
 import { useAuth } from '../context/AuthContext';
 import { UserProfile } from '../types';
@@ -47,6 +48,7 @@ interface SidebarProps {
   selectedClientId: string | null;
   onSelectClient: (clientId: string) => void;
   onOpenNewClientModal?: () => void;
+  onOpenTrash?: () => void;
 }
 
 export const Sidebar: React.FC<SidebarProps> = ({
@@ -58,6 +60,7 @@ export const Sidebar: React.FC<SidebarProps> = ({
   selectedClientId,
   onSelectClient,
   onOpenNewClientModal,
+  onOpenTrash,
 }) => {
   const { userProfile, isAdmin, logout } = useAuth();
   const [clientsMenuExpanded, setClientsMenuExpanded] = useState<boolean>(true);
@@ -333,6 +336,28 @@ export const Sidebar: React.FC<SidebarProps> = ({
                   R$
                 </span>
               </button>
+
+              {/* Lixeira de Vendas (Acesso Rápido) */}
+              {onOpenTrash && (
+                <button
+                  type="button"
+                  onClick={() => {
+                    onOpenTrash();
+                    if (window.innerWidth < 1024) {
+                      setIsOpen(false);
+                    }
+                  }}
+                  className="w-full flex items-center justify-between px-3 py-2.5 rounded-xl font-bold transition text-left text-amber-200 hover:bg-red-900 hover:text-white mt-1 border border-amber-500/30 cursor-pointer group"
+                >
+                  <div className="flex items-center gap-3">
+                    <Archive className="w-5 h-5 shrink-0 text-amber-400 group-hover:scale-110 transition" />
+                    <span>Lixeira de Vendas</span>
+                  </div>
+                  <span className="text-[10px] font-black uppercase px-2 py-0.5 rounded-full bg-amber-400 text-stone-950 shadow-xs">
+                    Histórico
+                  </span>
+                </button>
+              )}
             </>
           ) : (
             /* RESELLER MENU */

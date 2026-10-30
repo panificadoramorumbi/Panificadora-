@@ -26,10 +26,18 @@ import {
   Eye,
   EyeOff,
   UserCheck,
+  RotateCcw,
+  Archive,
 } from 'lucide-react';
 import { ProductPrices, NotificationPreference } from '../../types';
+import { TrashModal } from './TrashModal';
 import { formatCurrency } from '../../utils/formatters';
-import { updateProductPrices, cleanAppKeepOnlyFrancisca } from '../../services/dataService';
+import {
+  updateProductPrices,
+  cleanAppKeepOnlyFrancisca,
+  cleanAppKeepOnlyAdmin,
+  resetAllHistoricalData,
+} from '../../services/dataService';
 import { FIREBASE_INFO, testConnection } from '../../lib/firebase';
 import { useAuth } from '../../context/AuthContext';
 import { PWAInstallButton } from '../PWAInstallButton';
@@ -43,6 +51,7 @@ interface SettingsViewProps {
 export const SettingsView: React.FC<SettingsViewProps> = ({ currentPrices, initialTab = 'dados' }) => {
   const { currentUser, userProfile, updateUserCredentials } = useAuth();
   const [activeTab, setActiveTab] = useState<'dados' | 'precos' | 'zerar' | 'apk'>(initialTab);
+  const [showTrashModal, setShowTrashModal] = useState(false);
 
   useEffect(() => {
     if (initialTab) {
@@ -186,6 +195,54 @@ export const SettingsView: React.FC<SettingsViewProps> = ({ currentPrices, initi
     } catch (err: any) {
       console.error(err);
       setResetErrorMsg('Erro ao executar limpeza: ' + (err?.message || err));
+    } finally {
+      setIsResetting(false);
+    }
+  };
+
+  const handleRunResetAdminOnly = async () => {
+    const confirmed = window.confirm(
+      'ATENÇÃO: Deseja apagar todos os revendedores cadastrados e todo o histórico, deixando APENAS a conta do Administrador?\n\n• Todos os usuários fictícios serão excluídos.\n• Todos os pedidos e pagamentos voltarão a R$ 0,00.\n• Sua conta de Administrador (dyko) e configurações de preços continuarão salvas.'
+    );
+
+    if (!confirmed) return;
+
+    setIsResetting(true);
+    setResetErrorMsg(null);
+    setResetSuccessMsg(null);
+
+    try {
+      const res = await cleanAppKeepOnlyAdmin();
+      setResetSuccessMsg(
+        `Limpeza concluída com sucesso! Foram excluídos ${res.deletedUsers} revendedor(es), ${res.deletedOrders} pedido(s) e ${res.deletedPayments} pagamento(s). Apenas sua conta de Administrador foi mantida. Você pode cadastrar os clientes reais agora.`
+      );
+    } catch (err: any) {
+      console.error(err);
+      setResetErrorMsg('Erro ao executar limpeza: ' + (err?.message || err));
+    } finally {
+      setIsResetting(false);
+    }
+  };
+
+  const handleRunResetOrdersOnly = async () => {
+    const confirmed = window.confirm(
+      'Deseja zerar todas as vendas e pedidos do sistema?\n\n• Todos os clientes atuais continuarão cadastrados.\n• O saldo devedor e faturamento de todos voltará para R$ 0,00.\n• O painel geral ficará 100% limpo para novas vendas.'
+    );
+
+    if (!confirmed) return;
+
+    setIsResetting(true);
+    setResetErrorMsg(null);
+    setResetSuccessMsg(null);
+
+    try {
+      const res = await resetAllHistoricalData();
+      setResetSuccessMsg(
+        `Painel geral zerado com sucesso! Foram excluídos ${res.deletedOrders} pedido(s) e ${res.deletedPayments} pagamento(s). Todas as métricas voltaram para R$ 0,00 e seus clientes continuam cadastrados.`
+      );
+    } catch (err: any) {
+      console.error(err);
+      setResetErrorMsg('Erro ao zerar pedidos: ' + (err?.message || err));
     } finally {
       setIsResetting(false);
     }
@@ -552,19 +609,19 @@ export const SettingsView: React.FC<SettingsViewProps> = ({ currentPrices, initi
         </div>
       )}
 
-      {/* TAB 3: ZERAR VALORES & MANTER SÓ DONA FRANCISCA */}
+      {/* TAB 3: ZERAR VALORES & LIMPEZA DO APLICATIVO */}
       {activeTab === 'zerar' && (
         <div className="bg-white rounded-3xl p-6 sm:p-7 shadow-sm border border-stone-200 max-w-2xl space-y-5">
           <div className="flex items-center gap-2.5 pb-4 border-b border-stone-100">
-            <div className="w-11 h-11 rounded-2xl bg-amber-500 text-stone-950 flex items-center justify-center font-black shadow-md">
-              <Trash2 className="w-6 h-6" />
+            <div className="w-11 h-11 rounded-2xl bg-red-800 text-white flex items-center justify-center font-black shadow-md">
+              <RotateCcw className="w-6 h-6 text-amber-300" />
             </div>
             <div>
               <h3 className="text-base font-black text-stone-900">
-                Limpeza de Testes & Zerar Aplicativo
+                Zerar Valores & Limpeza do Aplicativo
               </h3>
               <p className="text-xs text-stone-500">
-                Deixar somente o usuário da Dona Francisca e zerar todos os valores para começar pra valer
+                Deixe o painel geral zerado ou apague revendedores para começar do zero
               </p>
             </div>
           </div>
@@ -573,7 +630,7 @@ export const SettingsView: React.FC<SettingsViewProps> = ({ currentPrices, initi
             <div className="p-4 rounded-2xl bg-emerald-50 border border-emerald-200 text-xs text-emerald-900 font-bold space-y-1">
               <div className="flex items-center gap-2">
                 <CheckCircle2 className="w-5 h-5 text-emerald-600 shrink-0" />
-                <span className="text-sm font-black text-emerald-950">Valores Zerados com Sucesso!</span>
+                <span className="text-sm font-black text-emerald-950">Operação Concluída com Sucesso!</span>
               </div>
               <p className="leading-relaxed text-emerald-800">{resetSuccessMsg}</p>
             </div>
@@ -586,44 +643,123 @@ export const SettingsView: React.FC<SettingsViewProps> = ({ currentPrices, initi
             </div>
           )}
 
-          <div className="p-5 rounded-2xl bg-gradient-to-r from-amber-50 via-white to-amber-50 border-2 border-amber-300 space-y-3">
+          {/* Option 1: Zerar Apenas Vendas e Pedidos (Manter Clientes) */}
+          <div className="p-5 rounded-2xl bg-red-50/70 border-2 border-red-300 space-y-3">
             <div className="flex items-center justify-between">
-              <span className="text-xs font-black uppercase text-amber-950 flex items-center gap-2">
-                <Sparkles className="w-4 h-4 text-amber-600" />
-                <span>Zerar Valores e Manter Apenas Dona Francisca</span>
+              <span className="text-xs font-black uppercase text-red-950 flex items-center gap-2">
+                <RotateCcw className="w-4 h-4 text-red-800" />
+                <span>1. Zerar Painel Geral (Manter Clientes Cadastrados)</span>
               </span>
-              <span className="text-[10px] font-black uppercase px-2.5 py-1 rounded-full bg-emerald-100 text-emerald-800">
-                Começar do Pedido #01
+              <span className="text-[10px] font-black uppercase px-2.5 py-1 rounded-full bg-red-800 text-white">
+                R$ 0,00 Geral
               </span>
             </div>
 
             <p className="text-stone-700 text-xs leading-relaxed">
-              Esta ação foi preparada exatamente para o início da operação real:
+              Zera todas as vendas, sobras e pagamentos da padaria. Todas as métricas do painel geral voltam imediatamente para <strong>R$ 0,00</strong>. Todos os clientes que você já cadastrou continuarão salvos com seus dados e senhas prontos para novos pedidos.
             </p>
 
-            <ul className="text-xs text-stone-600 space-y-1.5 list-disc list-inside">
-              <li>Apaga todos os pedidos de teste (o saldo geral e o extrato voltam para <strong>R$ 0,00</strong>).</li>
-              <li>Apaga todos os pagamentos e acertos de teste já feitos.</li>
-              <li>Exclui os clientes fictícios criados para teste.</li>
-              <li>
-                <strong>Mantém o cadastro da Dona Francisca</strong> pronto como revendedora, com usuário para login e saldo zerado.
-              </li>
-              <li>O próximo pedido que você lançar para ela será automaticamente o <strong>Pedido #01</strong>.</li>
-            </ul>
+            <div className="pt-2">
+              <button
+                type="button"
+                disabled={isResetting}
+                onClick={handleRunResetOrdersOnly}
+                className="w-full py-3.5 bg-red-800 hover:bg-red-900 active:scale-98 text-white font-black text-xs uppercase tracking-wider rounded-xl shadow-md transition flex items-center justify-center gap-2 disabled:opacity-50 cursor-pointer"
+              >
+                <RotateCcw className="w-4 h-4 text-amber-300" />
+                <span>
+                  {isResetting ? 'Zerando painel...' : 'Zerar Todas as Vendas e Deixar Painel Geral em R$ 0,00'}
+                </span>
+              </button>
+            </div>
+          </div>
+
+          {/* Option 2: Apagar Todos os Usuários e Deixar Somente Administrador */}
+          <div className="p-5 rounded-2xl bg-stone-50 border-2 border-stone-300 space-y-3">
+            <div className="flex items-center justify-between">
+              <span className="text-xs font-black uppercase text-stone-900 flex items-center gap-2">
+                <Trash2 className="w-4 h-4 text-stone-700" />
+                <span>2. Apagar Todos os Revendedores & Deixar Somente Administrador</span>
+              </span>
+              <span className="text-[10px] font-black uppercase px-2.5 py-1 rounded-full bg-stone-900 text-white">
+                Começar do Zero
+              </span>
+            </div>
+
+            <p className="text-stone-700 text-xs leading-relaxed">
+              Exclui permanentemente todos os revendedores cadastrados e todo o histórico de testes. Mantém <strong>apenas a sua conta de Administrador (dyko)</strong> e a tabela de preços salva, permitindo que você inicie o aplicativo limpo a partir de hoje.
+            </p>
+
+            <div className="pt-2">
+              <button
+                type="button"
+                disabled={isResetting}
+                onClick={handleRunResetAdminOnly}
+                className="w-full py-3.5 bg-stone-900 hover:bg-stone-800 active:scale-98 text-white font-black text-xs uppercase tracking-wider rounded-xl shadow-md transition flex items-center justify-center gap-2 disabled:opacity-50 cursor-pointer border border-stone-700"
+              >
+                <Trash2 className="w-4 h-4 text-amber-300" />
+                <span>
+                  {isResetting ? 'Apagando revendedores...' : 'Apagar Todos os Revendedores e Deixar Só Administrador'}
+                </span>
+              </button>
+            </div>
+          </div>
+
+          {/* Option 3: Zerar e Manter Apenas Dona Francisca */}
+          <div className="p-5 rounded-2xl bg-amber-50/70 border border-amber-300 space-y-3">
+            <div className="flex items-center justify-between">
+              <span className="text-xs font-black uppercase text-amber-950 flex items-center gap-2">
+                <Sparkles className="w-4 h-4 text-amber-600" />
+                <span>3. Zerar Valores e Manter Apenas Dona Francisca</span>
+              </span>
+              <span className="text-[10px] font-black uppercase px-2.5 py-1 rounded-full bg-emerald-100 text-emerald-800">
+                Pedido #01
+              </span>
+            </div>
+
+            <p className="text-stone-700 text-xs leading-relaxed">
+              Apaga pedidos e pagamentos e garante que a Dona Francisca continue cadastrada como revendedora com saldo em R$ 0,00 para o próximo pedido ser o #01.
+            </p>
 
             <div className="pt-2">
               <button
                 type="button"
                 disabled={isResetting}
                 onClick={handleRunResetFrancisca}
-                className="w-full py-3.5 bg-red-800 hover:bg-red-900 active:scale-98 text-white font-black text-xs uppercase tracking-wider rounded-xl shadow-md transition flex items-center justify-center gap-2 disabled:opacity-50 cursor-pointer"
+                className="w-full py-3 bg-amber-600 hover:bg-amber-700 active:scale-98 text-white font-black text-xs uppercase tracking-wider rounded-xl shadow-xs transition flex items-center justify-center gap-2 disabled:opacity-50 cursor-pointer"
               >
-                <Trash2 className="w-4 h-4 text-amber-300" />
+                <Sparkles className="w-4 h-4 text-white" />
                 <span>
-                  {isResetting
-                    ? 'Limpando dados de teste...'
-                    : 'Executar: Zerar Todo o Histórico e Deixar Apenas Dona Francisca'}
+                  {isResetting ? 'Limpando...' : 'Zerar e Manter Apenas Dona Francisca'}
                 </span>
+              </button>
+            </div>
+          </div>
+
+          {/* Option 4: Lixeira de Vendas & Histórico Apagado */}
+          <div className="p-5 rounded-2xl bg-gradient-to-r from-stone-900 via-stone-850 to-red-950 text-white border-2 border-stone-800 space-y-3 shadow-md">
+            <div className="flex items-center justify-between">
+              <span className="text-xs font-black uppercase text-amber-400 flex items-center gap-2">
+                <Archive className="w-4 h-4 text-amber-400" />
+                <span>4. Lixeira de Vendas & Histórico Apagado</span>
+              </span>
+              <span className="text-[10px] font-black uppercase px-2.5 py-1 rounded-full bg-amber-400 text-stone-950 shadow-xs">
+                Recuperar Dados
+              </span>
+            </div>
+
+            <p className="text-stone-300 text-xs leading-relaxed">
+              Consulte todo o histórico de vendas já zeradas. Você pode inspecionar valores realizados, quantidades de pães salgados e doces de cada pedido, ou restaurar vendas de volta ao painel geral a qualquer momento com apenas 1 clique.
+            </p>
+
+            <div className="pt-2">
+              <button
+                type="button"
+                onClick={() => setShowTrashModal(true)}
+                className="w-full py-3.5 bg-amber-400 hover:bg-amber-300 active:scale-98 text-stone-950 font-black text-xs uppercase tracking-wider rounded-xl shadow-md transition flex items-center justify-center gap-2 cursor-pointer"
+              >
+                <Archive className="w-4 h-4 text-stone-950" />
+                <span>Abrir Lixeira de Vendas Apagadas</span>
               </button>
             </div>
           </div>
@@ -738,6 +874,12 @@ export const SettingsView: React.FC<SettingsViewProps> = ({ currentPrices, initi
           </div>
         </div>
       )}
+
+      {/* Modal Lixeira de Vendas */}
+      <TrashModal
+        isOpen={showTrashModal}
+        onClose={() => setShowTrashModal(false)}
+      />
     </div>
   );
 };
