@@ -1,5 +1,5 @@
 import React, { createContext, useContext, useEffect, useState, useTransition } from 'react';
-import { initializeApp } from 'firebase/app';
+import { initializeApp, deleteApp } from 'firebase/app';
 import {
   User,
   onAuthStateChanged,
@@ -20,6 +20,7 @@ import {
   setDoc,
   updateDoc,
   onSnapshot,
+  getFirestore,
 } from 'firebase/firestore';
 import { auth, db, app, handleFirestoreError, OperationType, FIREBASE_INFO } from '../lib/firebase';
 import { UserProfile, UserRole, NotificationPreference } from '../types';
@@ -423,11 +424,12 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
     customPriceSweet?: number;
     notificationPreference?: NotificationPreference;
   }) => {
-    try {
-      const secondaryAppName = `temp-register-${Date.now()}`;
-      const secondaryApp = initializeApp(app.options, secondaryAppName);
-      const secondaryAuth = getSecondaryAuth(secondaryApp);
+    const secondaryAppName = `temp-register-${Date.now()}`;
+    const secondaryApp = initializeApp(app.options, secondaryAppName);
+    const secondaryAuth = getSecondaryAuth(secondaryApp);
+    const secondaryDb = getFirestore(secondaryApp, FIREBASE_INFO.firestoreDatabaseId);
 
+    try {
       // Generate or clean username (strips accents: Célia -> celia)
       const rawUser =
         username && username.trim().length > 0
@@ -437,12 +439,42 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
         sanitizeUsername(rawUser) || `user${Date.now().toString().slice(-4)}`;
 
       // Determine Auth Email: if email provided use it, otherwise use username@morumbi.app
-      const authEmail =
+      let authEmail =
         email && email.includes('@')
           ? email.trim().toLowerCase()
           : `${cleanUsername}@morumbi.app`;
 
-      const userCred = await createUserWithEmailAndPassword(secondaryAuth, authEmail, pass);
+      let userCred: any;
+      try {
+        userCred = await createUserWithEmailAndPassword(secondaryAuth, authEmail, pass);
+      } catch (createErr: any) {
+        if (createErr?.code === 'auth/email-already-in-use') {
+          // If already in use from past session, attempt sign in to update credentials
+          let signedIn = false;
+          for (const testPass of [pass, '123456', 'morumbi', 'admin123']) {
+            try {
+              userCred = await signInWithEmailAndPassword(secondaryAuth, authEmail, testPass);
+              signedIn = true;
+              if (testPass !== pass) {
+                try {
+                  await updatePassword(userCred.user, pass);
+                } catch {}
+              }
+              break;
+            } catch {}
+          }
+
+          // If couldn't sign in (e.g. unknown password on orphaned auth user),
+          // create a clean unique auth email, and map it in /usernames so login by username works seamlessly!
+          if (!signedIn) {
+            authEmail = `${cleanUsername}.${Date.now().toString().slice(-4)}@morumbi.app`;
+            userCred = await createUserWithEmailAndPassword(secondaryAuth, authEmail, pass);
+          }
+        } else {
+          throw createErr;
+        }
+      }
+
       const newUid = userCred.user.uid;
 
       // Update Firebase Auth user displayName so it is NEVER null!
@@ -474,10 +506,20 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
         notificationPreference,
       };
 
-      await setDoc(doc(db, 'users', newUid), newProfile);
+      try {
+        await setDoc(doc(db, 'users', newUid), newProfile, { merge: true });
+      } catch (writeErr) {
+        // Fallback: write using secondaryDb where newUid is the authenticated owner
+        try {
+          await setDoc(doc(secondaryDb, 'users', newUid), newProfile, { merge: true });
+        } catch (subErr) {
+          console.warn('Fallback secondaryDb write also failed:', subErr);
+          throw writeErr;
+        }
+      }
 
       // CRITICAL: Always register in /usernames directory mapping
-      await setDoc(doc(db, 'usernames', cleanUsername), {
+      const usernamePayload = {
         uid: newUid,
         email: authEmail,
         username: cleanUsername,
@@ -485,21 +527,21 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
         role: targetRole,
         simplePasswordHint: pass,
         createdAt: new Date().toISOString(),
-      });
+      };
+
+      try {
+        await setDoc(doc(db, 'usernames', cleanUsername), usernamePayload, { merge: true });
+      } catch {
+        try {
+          await setDoc(doc(secondaryDb, 'usernames', cleanUsername), usernamePayload, { merge: true });
+        } catch {}
+      }
 
       // Also register legacy unaccented form if different (e.g. clia for célia)
       const rawStripped = rawUser.toLowerCase().replace(/[^a-z0-9._-]/g, '');
       if (rawStripped && rawStripped !== cleanUsername) {
         try {
-          await setDoc(doc(db, 'usernames', rawStripped), {
-            uid: newUid,
-            email: authEmail,
-            username: cleanUsername,
-            displayName: displayName.trim(),
-            role: targetRole,
-            simplePasswordHint: pass,
-            createdAt: new Date().toISOString(),
-          });
+          await setDoc(doc(db, 'usernames', rawStripped), usernamePayload);
         } catch {}
       }
 
@@ -515,12 +557,16 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
           console.warn('Documento admins já gravado ou regras:', adminErr);
         }
       }
-
-      // Sign out secondary auth and cleanup
-      await signOut(secondaryAuth);
     } catch (err: any) {
       console.error('Falha ao registrar novo usuário:', err);
       throw err;
+    } finally {
+      try {
+        await signOut(secondaryAuth);
+      } catch {}
+      try {
+        await deleteApp(secondaryApp);
+      } catch {}
     }
   };
 

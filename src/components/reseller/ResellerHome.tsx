@@ -168,20 +168,33 @@ export const ResellerHome: React.FC<ResellerHomeProps> = ({
     return myOrders.filter((o) => !o.leftoversRecorded && o.status === 'aguardando_sobras');
   }, [myOrders]);
 
-  // Resale Price Configuration (Preço de venda ao consumidor final pelo revendedor)
+  // Resale Price Configuration (Preço de venda ao consumidor final pelo revendedor ou valor do lanche)
   const [resalePriceSalty, setResalePriceSalty] = useState<number>(() => {
+    if (userProfile?.resalePriceSalty !== undefined && Number(userProfile.resalePriceSalty) > 0) {
+      return Number(userProfile.resalePriceSalty);
+    }
     const saved = localStorage.getItem('morumbi_resale_salty');
     return saved ? Number(saved) : 1.0;
   });
   const [resalePriceSweet, setResalePriceSweet] = useState<number>(() => {
+    if (userProfile?.resalePriceSweet !== undefined && Number(userProfile.resalePriceSweet) > 0) {
+      return Number(userProfile.resalePriceSweet);
+    }
     const saved = localStorage.getItem('morumbi_resale_sweet');
     return saved ? Number(saved) : 1.5;
   });
+  const [salesModel, setSalesModel] = useState<'pao_puro' | 'lanches'>(() => {
+    return (
+      userProfile?.salesModel ||
+      (localStorage.getItem('morumbi_sales_model') as 'pao_puro' | 'lanches') ||
+      'pao_puro'
+    );
+  });
   const [showResaleSettings, setShowResaleSettings] = useState(false);
 
-  // Profit Simulator State
-  const [simSalty, setSimSalty] = useState<number>(60);
-  const [simSweet, setSimSweet] = useState<number>(20);
+  // Profit Simulator State - free input (permite 11, 15 ou qualquer quantidade)
+  const [simSalty, setSimSalty] = useState<number>(50);
+  const [simSweet, setSimSweet] = useState<number>(10);
 
   // Edit My Profile Modal State (Client can edit their own name, phone, login username, password)
   const [showEditProfileModal, setShowEditProfileModal] = useState(false);
@@ -254,11 +267,27 @@ export const ResellerHome: React.FC<ResellerHomeProps> = ({
     }
   };
 
-  const handleSaveResalePrice = (salty: number, sweet: number) => {
+  const handleSaveResalePrice = async (salty: number, sweet: number, model?: 'pao_puro' | 'lanches') => {
     setResalePriceSalty(salty);
     setResalePriceSweet(sweet);
-    localStorage.setItem('morumbi_resale_salty', salty.toString());
-    localStorage.setItem('morumbi_resale_sweet', sweet.toString());
+    if (model) setSalesModel(model);
+    try {
+      localStorage.setItem('morumbi_resale_salty', salty.toString());
+      localStorage.setItem('morumbi_resale_sweet', sweet.toString());
+      if (model) localStorage.setItem('morumbi_sales_model', model);
+    } catch {}
+
+    if (currentUser) {
+      try {
+        await updateUserProfile(currentUser.uid, {
+          resalePriceSalty: salty,
+          resalePriceSweet: sweet,
+          ...(model ? { salesModel: model } : {}),
+        });
+      } catch (e) {
+        console.warn('Erro ao sincronizar preço no perfil:', e);
+      }
+    }
   };
 
   // Financial summary
@@ -934,7 +963,8 @@ export const ResellerHome: React.FC<ResellerHomeProps> = ({
                   <div className="flex justify-between items-center mb-1">
                     <label className="text-xs font-bold text-stone-800">Pão Salgado (Francês)</label>
                     <span className="text-[10px] text-amber-800 font-bold">
-                      Custo Padaria: {formatCurrency(prices.priceSalty)}
+                      Custo Padaria: {formatCurrency(myUnitPriceSalty)}
+                      {hasCustomPrice && ' ⭐'}
                     </span>
                   </div>
                   <div className="flex items-center gap-2 mt-2">
@@ -942,7 +972,7 @@ export const ResellerHome: React.FC<ResellerHomeProps> = ({
                     <input
                       type="number"
                       step="0.05"
-                      min={prices.priceSalty}
+                      min={myUnitPriceSalty}
                       value={resalePriceSalty}
                       onChange={(e) =>
                         handleSaveResalePrice(parseFloat(e.target.value) || 0, resalePriceSweet)
@@ -951,7 +981,7 @@ export const ResellerHome: React.FC<ResellerHomeProps> = ({
                     />
                   </div>
                   <p className="text-[10px] text-emerald-700 font-bold mt-2">
-                    Ganho por pão: + {formatCurrency(Math.max(0, resalePriceSalty - prices.priceSalty))}
+                    Ganho por pão: + {formatCurrency(Math.max(0, resalePriceSalty - myUnitPriceSalty))}
                   </p>
                 </div>
 
@@ -959,7 +989,8 @@ export const ResellerHome: React.FC<ResellerHomeProps> = ({
                   <div className="flex justify-between items-center mb-1">
                     <label className="text-xs font-bold text-stone-800">Pão Doce</label>
                     <span className="text-[10px] text-amber-800 font-bold">
-                      Custo Padaria: {formatCurrency(prices.priceSweet)}
+                      Custo Padaria: {formatCurrency(myUnitPriceSweet)}
+                      {hasCustomPrice && ' ⭐'}
                     </span>
                   </div>
                   <div className="flex items-center gap-2 mt-2">
@@ -967,7 +998,7 @@ export const ResellerHome: React.FC<ResellerHomeProps> = ({
                     <input
                       type="number"
                       step="0.05"
-                      min={prices.priceSweet}
+                      min={myUnitPriceSweet}
                       value={resalePriceSweet}
                       onChange={(e) =>
                         handleSaveResalePrice(resalePriceSalty, parseFloat(e.target.value) || 0)
@@ -976,7 +1007,7 @@ export const ResellerHome: React.FC<ResellerHomeProps> = ({
                     />
                   </div>
                   <p className="text-[10px] text-emerald-700 font-bold mt-2">
-                    Ganho por pão: + {formatCurrency(Math.max(0, resalePriceSweet - prices.priceSweet))}
+                    Ganho por pão: + {formatCurrency(Math.max(0, resalePriceSweet - myUnitPriceSweet))}
                   </p>
                 </div>
               </div>
@@ -1031,40 +1062,155 @@ export const ResellerHome: React.FC<ResellerHomeProps> = ({
           </div>
 
           {/* Interactive Profit Simulator */}
-          <div className="bg-white rounded-3xl p-6 shadow-sm border border-stone-200 space-y-4">
-            <div className="flex items-center gap-2">
-              <div className="w-8 h-8 rounded-xl bg-amber-400 text-stone-950 flex items-center justify-center font-black">
-                <Coins className="w-4 h-4" />
+          <div className="bg-white rounded-3xl p-5 sm:p-6 shadow-sm border border-stone-200 space-y-5">
+            <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3">
+              <div className="flex items-center gap-2.5">
+                <div className="w-9 h-9 rounded-2xl bg-amber-400 text-stone-950 flex items-center justify-center font-black shrink-0">
+                  <Coins className="w-5 h-5" />
+                </div>
+                <div>
+                  <h4 className="text-sm sm:text-base font-black text-stone-900">
+                    Simulador de Lucro para seu Próximo Pedido
+                  </h4>
+                  <p className="text-xs text-stone-500">
+                    Defina a quantidade exata de pães (ex: 11, 15, 50) e seu preço de venda ou valor do lanche
+                  </p>
+                </div>
               </div>
-              <div>
-                <h4 className="text-sm font-black text-stone-900">
-                  Simulador de Lucro para o Próximo Pedido
-                </h4>
-                <p className="text-xs text-stone-500">
-                  Ajuste a quantidade que pretende pedir amanhã e veja na hora quanto vai sobrar no seu bolso:
-                </p>
+
+              {/* Informative Badge about Bakery Unit Cost */}
+              <div className="inline-flex items-center gap-1.5 px-3 py-1.5 bg-amber-50 rounded-xl border border-amber-200 text-amber-950 text-xs font-bold shrink-0">
+                <Sparkles className="w-3.5 h-3.5 text-amber-600" />
+                <span>
+                  Seu Custo na Padaria: <strong>{formatCurrency(myUnitPriceSalty)}</strong> / salgado
+                  {hasCustomPrice && ' (Preço Exclusivo ⭐)'}
+                </span>
               </div>
             </div>
 
-            <div className="grid grid-cols-1 sm:grid-cols-2 gap-4 pt-2">
-              <div className="p-4 bg-stone-50 rounded-2xl border border-stone-200 space-y-2">
-                <div className="flex justify-between items-center">
-                  <label className="text-xs font-bold text-stone-800">
-                    Quantos Pães Salgados vai pedir?
-                  </label>
-                  <span className="text-xs font-black text-red-800">{simSalty} un</span>
+            {/* Sales Model Selector: Revenda de Pão vs Produção de Lanches */}
+            <div className="p-3.5 bg-stone-50 rounded-2xl border border-stone-200">
+              <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-2 mb-2">
+                <span className="text-xs font-black uppercase tracking-wider text-stone-700">
+                  Como você comercializa seus pães?
+                </span>
+                <span className="text-[11px] text-stone-500">
+                  Selecione para ajustar o cálculo ao seu modelo de negócio:
+                </span>
+              </div>
+              <div className="grid grid-cols-1 sm:grid-cols-2 gap-2">
+                <button
+                  type="button"
+                  onClick={() => {
+                    handleSaveResalePrice(resalePriceSalty > 2 ? 1.0 : resalePriceSalty, resalePriceSweet, 'pao_puro');
+                  }}
+                  className={`p-3 rounded-xl border text-left transition flex items-center gap-3 ${
+                    salesModel === 'pao_puro'
+                      ? 'bg-amber-50 border-amber-400 text-stone-950 font-bold shadow-2xs'
+                      : 'bg-white border-stone-200 text-stone-700 hover:bg-stone-100'
+                  }`}
+                >
+                  <Croissant className={`w-5 h-5 ${salesModel === 'pao_puro' ? 'text-amber-700' : 'text-stone-400'}`} />
+                  <div>
+                    <div className="text-xs font-black">Revenda de Pão Francês / Puro</div>
+                    <div className="text-[10px] text-stone-500">Vende o pão por unidade (ex: R$ 1,00 ou R$ 1,20)</div>
+                  </div>
+                </button>
+
+                <button
+                  type="button"
+                  onClick={() => {
+                    handleSaveResalePrice(resalePriceSalty <= 1.2 ? 6.0 : resalePriceSalty, resalePriceSweet, 'lanches');
+                  }}
+                  className={`p-3 rounded-xl border text-left transition flex items-center gap-3 ${
+                    salesModel === 'lanches'
+                      ? 'bg-emerald-50 border-emerald-400 text-stone-950 font-bold shadow-2xs'
+                      : 'bg-white border-stone-200 text-stone-700 hover:bg-stone-100'
+                  }`}
+                >
+                  <ShoppingBag className={`w-5 h-5 ${salesModel === 'lanches' ? 'text-emerald-700' : 'text-stone-400'}`} />
+                  <div>
+                    <div className="text-xs font-black">Lanchonete / Lanches & Sanduíches</div>
+                    <div className="text-[10px] text-stone-500">Faz lanches, hambúrguer ou hot dog (ex: R$ 5,00 a R$ 15,00)</div>
+                  </div>
+                </button>
+              </div>
+            </div>
+
+            {/* Inputs & Steppers Grid */}
+            <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+              {/* Salty Bread Simulator Card */}
+              <div className="p-4 bg-stone-50 rounded-2xl border border-stone-200 space-y-3">
+                <div className="flex items-center justify-between">
+                  <div>
+                    <label className="text-xs font-bold text-stone-800 block">
+                      Pão Salgado (Francês)
+                    </label>
+                    <span className="text-[11px] text-stone-500">
+                      Custo Padaria: <strong>{formatCurrency(myUnitPriceSalty)}</strong>
+                    </span>
+                  </div>
+
+                  {/* Direct Number Input (Permite digitar 11, 15, 23, etc.) */}
+                  <div className="flex items-center gap-1.5">
+                    <span className="text-xs font-bold text-stone-500">Qtd:</span>
+                    <input
+                      type="number"
+                      min="0"
+                      step="1"
+                      value={simSalty}
+                      onChange={(e) => setSimSalty(Math.max(0, parseInt(e.target.value) || 0))}
+                      className="w-20 px-2.5 py-1.5 bg-white border-2 border-amber-400 focus:border-red-800 rounded-xl text-center font-black text-sm text-stone-900 shadow-2xs outline-hidden"
+                      title="Digite qualquer quantidade, ex: 11 ou 15"
+                    />
+                    <span className="text-xs font-bold text-stone-600">un</span>
+                  </div>
                 </div>
+
+                {/* Slider with step="1" */}
                 <input
                   type="range"
                   min="0"
                   max="300"
-                  step="10"
+                  step="1"
                   value={simSalty}
                   onChange={(e) => setSimSalty(parseInt(e.target.value) || 0)}
-                  className="w-full accent-red-800"
+                  className="w-full accent-red-800 cursor-pointer"
                 />
-                <div className="flex gap-2">
-                  {[30, 50, 100, 150].map((v) => (
+
+                {/* Increments and Presets */}
+                <div className="flex flex-wrap items-center gap-1.5">
+                  <button
+                    type="button"
+                    onClick={() => setSimSalty((prev) => Math.max(0, prev - 1))}
+                    className="px-2 py-1 bg-white hover:bg-stone-100 border border-stone-200 rounded-lg text-xs font-black text-stone-700 transition"
+                    title="Diminuir 1 pão"
+                  >
+                    -1
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => setSimSalty((prev) => prev + 1)}
+                    className="px-2 py-1 bg-white hover:bg-stone-100 border border-stone-200 rounded-lg text-xs font-black text-stone-700 transition"
+                    title="Adicionar 1 pão"
+                  >
+                    +1
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => setSimSalty((prev) => prev + 5)}
+                    className="px-2 py-1 bg-white hover:bg-stone-100 border border-stone-200 rounded-lg text-xs font-black text-stone-700 transition"
+                  >
+                    +5
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => setSimSalty((prev) => prev + 10)}
+                    className="px-2 py-1 bg-white hover:bg-stone-100 border border-stone-200 rounded-lg text-xs font-black text-stone-700 transition"
+                  >
+                    +10
+                  </button>
+                  {[11, 15, 30, 50, 100].map((v) => (
                     <button
                       key={v}
                       type="button"
@@ -1072,33 +1218,110 @@ export const ResellerHome: React.FC<ResellerHomeProps> = ({
                       className={`px-2 py-1 rounded-lg text-[10px] font-bold border transition ${
                         simSalty === v
                           ? 'bg-red-800 text-white border-red-800'
-                          : 'bg-white text-stone-700 border-stone-200'
+                          : 'bg-white text-stone-700 border-stone-200 hover:bg-stone-100'
                       }`}
                     >
                       {v} un
                     </button>
                   ))}
+                  <button
+                    type="button"
+                    onClick={() => setSimSalty(0)}
+                    className="px-2 py-1 bg-rose-50 hover:bg-rose-100 border border-rose-200 text-rose-700 rounded-lg text-[10px] font-bold transition ml-auto"
+                  >
+                    Zerar
+                  </button>
+                </div>
+
+                {/* Inline Selling Price for Salty Bread / Snack */}
+                <div className="pt-2 border-t border-stone-200/80 flex items-center justify-between gap-2">
+                  <div className="text-[11px] font-bold text-stone-700">
+                    {salesModel === 'lanches' ? 'Preço do Lanche / Sanduíche:' : 'Seu Preço de Venda do Pão:'}
+                  </div>
+                  <div className="flex items-center gap-1.5">
+                    <span className="text-xs font-bold text-stone-500">R$</span>
+                    <input
+                      type="number"
+                      step="0.05"
+                      min={myUnitPriceSalty}
+                      value={resalePriceSalty}
+                      onChange={(e) =>
+                        handleSaveResalePrice(parseFloat(e.target.value) || 0, resalePriceSweet)
+                      }
+                      className="w-20 px-2.5 py-1 bg-white border border-stone-300 rounded-xl text-xs font-black text-stone-900 text-center"
+                      placeholder="1.00"
+                    />
+                  </div>
+                </div>
+                <div className="flex items-center justify-between text-[11px] text-emerald-800 font-bold bg-emerald-50/80 px-2.5 py-1 rounded-xl">
+                  <span>Ganho por unidade:</span>
+                  <span>+ {formatCurrency(Math.max(0, resalePriceSalty - myUnitPriceSalty))}</span>
                 </div>
               </div>
 
-              <div className="p-4 bg-stone-50 rounded-2xl border border-stone-200 space-y-2">
-                <div className="flex justify-between items-center">
-                  <label className="text-xs font-bold text-stone-800">
-                    Quantos Pães Doces vai pedir?
-                  </label>
-                  <span className="text-xs font-black text-red-800">{simSweet} un</span>
+              {/* Sweet Bread Simulator Card */}
+              <div className="p-4 bg-stone-50 rounded-2xl border border-stone-200 space-y-3">
+                <div className="flex items-center justify-between">
+                  <div>
+                    <label className="text-xs font-bold text-stone-800 block">
+                      Pão Doce
+                    </label>
+                    <span className="text-[11px] text-stone-500">
+                      Custo Padaria: <strong>{formatCurrency(myUnitPriceSweet)}</strong>
+                    </span>
+                  </div>
+
+                  {/* Direct Number Input */}
+                  <div className="flex items-center gap-1.5">
+                    <span className="text-xs font-bold text-stone-500">Qtd:</span>
+                    <input
+                      type="number"
+                      min="0"
+                      step="1"
+                      value={simSweet}
+                      onChange={(e) => setSimSweet(Math.max(0, parseInt(e.target.value) || 0))}
+                      className="w-20 px-2.5 py-1.5 bg-white border-2 border-amber-400 focus:border-red-800 rounded-xl text-center font-black text-sm text-stone-900 shadow-2xs outline-hidden"
+                      title="Digite qualquer quantidade, ex: 10 ou 15"
+                    />
+                    <span className="text-xs font-bold text-stone-600">un</span>
+                  </div>
                 </div>
+
+                {/* Slider with step="1" */}
                 <input
                   type="range"
                   min="0"
                   max="150"
-                  step="5"
+                  step="1"
                   value={simSweet}
                   onChange={(e) => setSimSweet(parseInt(e.target.value) || 0)}
-                  className="w-full accent-red-800"
+                  className="w-full accent-red-800 cursor-pointer"
                 />
-                <div className="flex gap-2">
-                  {[10, 20, 50].map((v) => (
+
+                {/* Increments and Presets */}
+                <div className="flex flex-wrap items-center gap-1.5">
+                  <button
+                    type="button"
+                    onClick={() => setSimSweet((prev) => Math.max(0, prev - 1))}
+                    className="px-2 py-1 bg-white hover:bg-stone-100 border border-stone-200 rounded-lg text-xs font-black text-stone-700 transition"
+                  >
+                    -1
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => setSimSweet((prev) => prev + 1)}
+                    className="px-2 py-1 bg-white hover:bg-stone-100 border border-stone-200 rounded-lg text-xs font-black text-stone-700 transition"
+                  >
+                    +1
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => setSimSweet((prev) => prev + 5)}
+                    className="px-2 py-1 bg-white hover:bg-stone-100 border border-stone-200 rounded-lg text-xs font-black text-stone-700 transition"
+                  >
+                    +5
+                  </button>
+                  {[5, 10, 15, 20, 50].map((v) => (
                     <button
                       key={v}
                       type="button"
@@ -1106,12 +1329,44 @@ export const ResellerHome: React.FC<ResellerHomeProps> = ({
                       className={`px-2 py-1 rounded-lg text-[10px] font-bold border transition ${
                         simSweet === v
                           ? 'bg-red-800 text-white border-red-800'
-                          : 'bg-white text-stone-700 border-stone-200'
+                          : 'bg-white text-stone-700 border-stone-200 hover:bg-stone-100'
                       }`}
                     >
                       {v} un
                     </button>
                   ))}
+                  <button
+                    type="button"
+                    onClick={() => setSimSweet(0)}
+                    className="px-2 py-1 bg-rose-50 hover:bg-rose-100 border border-rose-200 text-rose-700 rounded-lg text-[10px] font-bold transition ml-auto"
+                  >
+                    Zerar
+                  </button>
+                </div>
+
+                {/* Inline Selling Price for Sweet Bread */}
+                <div className="pt-2 border-t border-stone-200/80 flex items-center justify-between gap-2">
+                  <div className="text-[11px] font-bold text-stone-700">
+                    Seu Preço de Venda do Doce:
+                  </div>
+                  <div className="flex items-center gap-1.5">
+                    <span className="text-xs font-bold text-stone-500">R$</span>
+                    <input
+                      type="number"
+                      step="0.05"
+                      min={myUnitPriceSweet}
+                      value={resalePriceSweet}
+                      onChange={(e) =>
+                        handleSaveResalePrice(resalePriceSalty, parseFloat(e.target.value) || 0)
+                      }
+                      className="w-20 px-2.5 py-1 bg-white border border-stone-300 rounded-xl text-xs font-black text-stone-900 text-center"
+                      placeholder="1.50"
+                    />
+                  </div>
+                </div>
+                <div className="flex items-center justify-between text-[11px] text-emerald-800 font-bold bg-emerald-50/80 px-2.5 py-1 rounded-xl">
+                  <span>Ganho por unidade:</span>
+                  <span>+ {formatCurrency(Math.max(0, resalePriceSweet - myUnitPriceSweet))}</span>
                 </div>
               </div>
             </div>
@@ -1130,9 +1385,15 @@ export const ResellerHome: React.FC<ResellerHomeProps> = ({
                       Resultado da Simulação ({simSalty} salgados + {simSweet} doces):
                     </span>
                     <p className="text-xs text-stone-700">
-                      Custo Padaria: <strong>{formatCurrency(simBakeryCost)}</strong> • Venda Prevista:{' '}
+                      Custo Padaria: <strong>{formatCurrency(simBakeryCost)}</strong> •{' '}
+                      {salesModel === 'lanches' ? 'Faturamento dos Lanches: ' : 'Venda Prevista: '}
                       <strong>{formatCurrency(simRevenue)}</strong>
                     </p>
+                    {salesModel === 'lanches' && (
+                      <p className="text-[11px] text-stone-500">
+                        Cada pão salgado sai por apenas <strong>{formatCurrency(myUnitPriceSalty)}</strong> no custo do seu lanche.
+                      </p>
+                    )}
                   </div>
 
                   <div className="flex items-center gap-4">
@@ -1141,7 +1402,7 @@ export const ResellerHome: React.FC<ResellerHomeProps> = ({
                         + {formatCurrency(simProfit)}
                       </span>
                       <span className="text-[11px] font-extrabold text-emerald-800">
-                        {simMargin.toFixed(1)}% de lucro líquido
+                        {simMargin.toFixed(1)}% de margem líquida
                       </span>
                     </div>
 
@@ -1153,7 +1414,7 @@ export const ResellerHome: React.FC<ResellerHomeProps> = ({
                         setShowConfirmSummary(false);
                         setShowNewOrderModal(true);
                       }}
-                      className="px-4 py-2.5 bg-emerald-600 hover:bg-emerald-700 text-white font-black text-xs uppercase rounded-xl shadow-md transition flex items-center gap-1.5 shrink-0"
+                      className="px-4 py-2.5 bg-emerald-600 hover:bg-emerald-700 text-white font-black text-xs uppercase rounded-xl shadow-md transition flex items-center gap-1.5 shrink-0 active:scale-95"
                     >
                       <PlusCircle className="w-4 h-4" />
                       <span>Pedir Agora</span>

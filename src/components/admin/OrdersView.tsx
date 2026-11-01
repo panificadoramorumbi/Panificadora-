@@ -18,8 +18,10 @@ import {
   Sparkles,
   Bell,
   Smartphone,
+  Edit3,
 } from 'lucide-react';
 import { Order, UserProfile, ProductPrices } from '../../types';
+import { EditOrderModal } from '../common/EditOrderModal';
 import {
   formatCurrency,
   formatDate,
@@ -56,6 +58,7 @@ export const OrdersView: React.FC<OrdersViewProps> = ({
   const [clientFilter, setClientFilter] = useState<string>('all');
   const [dateFilter, setDateFilter] = useState<string>(''); // YYYY-MM-DD
   const [selectedOrder, setSelectedOrder] = useState<Order | null>(null);
+  const [orderToEdit, setOrderToEdit] = useState<Order | null>(null);
 
   // Admin record leftovers state (Patrão lança sobras pelo cliente)
   const [orderForLeftovers, setOrderForLeftovers] = useState<Order | null>(null);
@@ -698,35 +701,43 @@ _Panificadora Morumbi — Sistema de Revenda_`;
                       </button>
                     )}
 
-                    <div className="grid grid-cols-4 gap-1.5">
+                    <div className="grid grid-cols-5 gap-1.5">
                       <button
                         onClick={() => setSelectedOrder(order)}
-                        className="py-2 px-1 bg-stone-200/80 hover:bg-stone-300 text-stone-800 font-bold rounded-xl flex items-center justify-center gap-1 text-[11px]"
+                        className="py-2 px-1 bg-stone-200/80 hover:bg-stone-300 text-stone-800 font-bold rounded-xl flex items-center justify-center gap-0.5 text-[10px]"
                         title="Ver Detalhes"
                       >
-                        <Eye className="w-3.5 h-3.5" />
+                        <Eye className="w-3 h-3" />
                         <span>Ver</span>
                       </button>
                       <button
+                        onClick={() => setOrderToEdit(order)}
+                        className="py-2 px-1 bg-amber-400 hover:bg-amber-500 text-stone-950 font-black rounded-xl flex items-center justify-center gap-0.5 text-[10px] shadow-2xs"
+                        title="Editar Pedido / Mudar Data"
+                      >
+                        <Edit3 className="w-3 h-3 text-stone-950" />
+                        <span>Editar</span>
+                      </button>
+                      <button
                         onClick={() => handleNotifyInApp(order)}
-                        className="py-2 px-1 bg-red-100 hover:bg-red-200 text-red-900 font-bold rounded-xl flex items-center justify-center gap-1 text-[11px]"
+                        className="py-2 px-1 bg-red-100 hover:bg-red-200 text-red-900 font-bold rounded-xl flex items-center justify-center gap-0.5 text-[10px]"
                         title="Notificar no App"
                       >
-                        <Smartphone className="w-3.5 h-3.5" />
+                        <Smartphone className="w-3 h-3" />
                         <span>Aviso</span>
                       </button>
                       <button
                         onClick={() => handleShareWhatsApp(order)}
-                        className="py-2 px-1 bg-emerald-100 hover:bg-emerald-200 text-emerald-900 font-bold rounded-xl flex items-center justify-center gap-1 text-[11px]"
+                        className="py-2 px-1 bg-emerald-100 hover:bg-emerald-200 text-emerald-900 font-bold rounded-xl flex items-center justify-center gap-0.5 text-[10px]"
                         title="Enviar no WhatsApp"
                       >
-                        <MessageCircle className="w-3.5 h-3.5" />
+                        <MessageCircle className="w-3 h-3" />
                         <span>Zap</span>
                       </button>
                       {onOpenAuditCorrection ? (
                         <button
                           onClick={() => onOpenAuditCorrection(order)}
-                          className="py-2 px-1 bg-amber-100 hover:bg-amber-200 text-amber-950 font-bold rounded-xl flex items-center justify-center gap-1 text-[11px]"
+                          className="py-2 px-1 bg-amber-100 hover:bg-amber-200 text-amber-950 font-bold rounded-xl flex items-center justify-center gap-0.5 text-[10px]"
                           title="Corrigir Quantidades"
                         >
                           <span>Corrigir</span>
@@ -802,7 +813,7 @@ _Panificadora Morumbi — Sistema de Revenda_`;
                             <button
                               type="button"
                               onClick={() => handleOpenRecordLeftovers(order)}
-                              className="px-2.5 py-1.5 rounded-lg bg-amber-400 hover:bg-amber-500 active:scale-95 text-stone-950 font-black text-[11px] shadow-xs transition flex items-center gap-1 shrink-0"
+                              className="px-2.5 py-1.5 rounded-lg bg-amber-400 hover:bg-amber-500 active:scale-95 text-stone-950 font-black text-[11px] shadow-xs transition flex items-center gap-1 shrink-0 cursor-pointer"
                               title="Lançar sobras deste pedido pelo cliente"
                             >
                               <Sparkles className="w-3.5 h-3.5 text-stone-950" />
@@ -810,22 +821,31 @@ _Panificadora Morumbi — Sistema de Revenda_`;
                             </button>
                           )}
                           <button
+                            type="button"
+                            onClick={() => setOrderToEdit(order)}
+                            className="px-2 py-1.5 rounded-lg bg-amber-400 hover:bg-amber-500 active:scale-95 text-stone-950 font-black text-[11px] transition flex items-center gap-1 shadow-2xs cursor-pointer"
+                            title="Editar dados do pedido ou mudar data"
+                          >
+                            <Edit3 className="w-3 h-3 text-stone-950" />
+                            <span>Editar</span>
+                          </button>
+                          <button
                             onClick={() => setSelectedOrder(order)}
-                            className="p-1.5 rounded-lg bg-stone-100 text-stone-700 hover:bg-stone-200 transition"
+                            className="p-1.5 rounded-lg bg-stone-100 text-stone-700 hover:bg-stone-200 transition cursor-pointer"
                             title="Ver detalhes"
                           >
                             <Eye className="w-3.5 h-3.5" />
                           </button>
                           <button
                             onClick={() => handleShareWhatsApp(order)}
-                            className="p-1.5 rounded-lg bg-emerald-50 text-emerald-700 hover:bg-emerald-100 transition"
+                            className="p-1.5 rounded-lg bg-emerald-50 text-emerald-700 hover:bg-emerald-100 transition cursor-pointer"
                             title="Enviar comprovante no WhatsApp"
                           >
                             <MessageCircle className="w-3.5 h-3.5" />
                           </button>
                           <button
                             onClick={() => handleNotifyInApp(order)}
-                            className="p-1.5 rounded-lg bg-red-50 text-red-800 hover:bg-red-100 transition"
+                            className="p-1.5 rounded-lg bg-red-50 text-red-800 hover:bg-red-100 transition cursor-pointer"
                             title="Enviar notificação na barra do celular do revendedor"
                           >
                             <Smartphone className="w-3.5 h-3.5" />
@@ -833,7 +853,7 @@ _Panificadora Morumbi — Sistema de Revenda_`;
                           {onOpenAuditCorrection && (
                             <button
                               onClick={() => onOpenAuditCorrection(order)}
-                              className="px-2 py-1 rounded-lg bg-red-50 text-red-800 font-bold text-[10px] hover:bg-red-100 transition"
+                              className="px-2 py-1 rounded-lg bg-red-50 text-red-800 font-bold text-[10px] hover:bg-red-100 transition cursor-pointer"
                               title="Alterar quantidade no modo auditoria"
                             >
                               Corrigir
@@ -995,6 +1015,19 @@ _Panificadora Morumbi — Sistema de Revenda_`;
               )}
 
               <div className="flex flex-wrap items-center justify-end gap-2 pt-2">
+                <button
+                  type="button"
+                  onClick={() => {
+                    const currentSelected = selectedOrder;
+                    setSelectedOrder(null);
+                    setOrderToEdit(currentSelected);
+                  }}
+                  className="px-4 py-2.5 bg-amber-500 hover:bg-amber-600 text-stone-950 font-black rounded-xl flex items-center gap-2 shadow-xs transition"
+                  title="Editar data de entrega, quantidades, preços ou observações deste pedido"
+                >
+                  <Edit3 className="w-4 h-4 text-stone-950" />
+                  <span>Editar Pedido / Mudar Data</span>
+                </button>
                 <button
                   onClick={() => handleNotifyInApp(selectedOrder)}
                   className="px-4 py-2.5 bg-red-800 hover:bg-red-900 text-white font-bold rounded-xl flex items-center gap-2 shadow-xs transition"
@@ -1497,6 +1530,16 @@ _Panificadora Morumbi — Sistema de Revenda_`;
             </form>
           </div>
         </div>
+      )}
+
+      {/* Modal: Editar Pedido / Mudar Data */}
+      {orderToEdit && (
+        <EditOrderModal
+          order={orderToEdit}
+          isOpen={Boolean(orderToEdit)}
+          onClose={() => setOrderToEdit(null)}
+          prices={prices}
+        />
       )}
     </div>
   );

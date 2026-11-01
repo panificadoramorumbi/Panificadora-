@@ -14,6 +14,9 @@ export interface UserProfile {
   clientType?: ClientType; // 'revendedor' (preço de atacado com sobras) ou 'consumidor_final' (R$ 1,00 encomendas)
   customPriceSalty?: number; // Preço fixo personalizado por unidade (ex: 0.70 ou 0.85)
   customPriceSweet?: number; // Preço fixo personalizado doce (ex: 1.25)
+  resalePriceSalty?: number; // Preço que o revendedor cobra (ex: 1.00 ou 5.00 para lanches)
+  resalePriceSweet?: number; // Preço que o revendedor cobra pelo doce (ex: 1.50)
+  salesModel?: 'pao_puro' | 'lanches'; // Se revende pão puro ou faz lanches
   active: boolean;
   createdAt: string;
   updatedAt?: string;

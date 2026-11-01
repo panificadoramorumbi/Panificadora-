@@ -29,9 +29,11 @@ import {
   PlusCircle,
   RotateCcw,
   Archive,
+  Edit3,
 } from 'lucide-react';
 import { UserProfile, Order, PaymentRecord, NotificationPreference, ProductPrices } from '../../types';
 import { TrashModal } from './TrashModal';
+import { EditOrderModal } from '../common/EditOrderModal';
 import {
   formatCurrency,
   formatDate,
@@ -84,6 +86,7 @@ export const ClientsView: React.FC<ClientsViewProps> = ({
   const [showEditModal, setShowEditModal] = useState(false);
   const [showTrashModal, setShowTrashModal] = useState(false);
   const [editingClient, setEditingClient] = useState<UserProfile | null>(null);
+  const [orderToEdit, setOrderToEdit] = useState<Order | null>(null);
 
   // Admin record leftovers state (Patrão lança sobras pelo cliente)
   const [orderForLeftovers, setOrderForLeftovers] = useState<Order | null>(null);
@@ -1414,16 +1417,27 @@ Para acessar:
                             </div>
                           </div>
 
-                          {!o.leftoversRecorded && (
+                          <div className="flex items-center gap-2 pt-1">
+                            {!o.leftoversRecorded && (
+                              <button
+                                type="button"
+                                onClick={() => handleOpenRecordLeftovers(o)}
+                                className="flex-1 py-2 bg-amber-500 hover:bg-amber-600 text-stone-950 font-black rounded-xl text-xs flex items-center justify-center gap-1.5 shadow-sm transition active:scale-[0.98]"
+                              >
+                                <Sparkles className="w-3.5 h-3.5 text-stone-950" />
+                                <span>Lançar Sobras</span>
+                              </button>
+                            )}
                             <button
                               type="button"
-                              onClick={() => handleOpenRecordLeftovers(o)}
-                              className="w-full py-2 bg-amber-500 hover:bg-amber-600 text-stone-950 font-black rounded-xl text-xs flex items-center justify-center gap-1.5 shadow-sm transition active:scale-[0.98]"
+                              onClick={() => setOrderToEdit(o)}
+                              className="flex-1 py-2 bg-stone-100 hover:bg-stone-200 text-stone-800 font-bold rounded-xl text-xs flex items-center justify-center gap-1.5 border border-stone-200 transition active:scale-[0.98]"
+                              title="Editar data de entrega, quantidades, preços ou observações"
                             >
-                              <Sparkles className="w-3.5 h-3.5 text-stone-950" />
-                              <span>Lançar Sobras Deste Pedido</span>
+                              <Edit3 className="w-3.5 h-3.5 text-stone-700" />
+                              <span>Editar Pedido / Data</span>
                             </button>
-                          )}
+                          </div>
                         </div>
                       ))}
                     </div>
@@ -1480,18 +1494,27 @@ Para acessar:
                                 </span>
                               </td>
                               <td className="py-3 text-center">
-                                {!o.leftoversRecorded ? (
+                                <div className="flex items-center justify-center gap-1.5">
+                                  {!o.leftoversRecorded && (
+                                    <button
+                                      type="button"
+                                      onClick={() => handleOpenRecordLeftovers(o)}
+                                      className="px-2.5 py-1 bg-amber-500 hover:bg-amber-600 text-stone-950 font-black rounded-lg text-[10px] inline-flex items-center gap-1 shadow-2xs transition active:scale-95"
+                                    >
+                                      <Sparkles className="w-3 h-3 text-stone-950" />
+                                      <span>Sobras</span>
+                                    </button>
+                                  )}
                                   <button
                                     type="button"
-                                    onClick={() => handleOpenRecordLeftovers(o)}
-                                    className="px-2.5 py-1 bg-amber-500 hover:bg-amber-600 text-stone-950 font-black rounded-lg text-[10px] inline-flex items-center gap-1 shadow-2xs transition active:scale-95"
+                                    onClick={() => setOrderToEdit(o)}
+                                    className="px-2.5 py-1 bg-stone-100 hover:bg-stone-200 text-stone-800 font-bold rounded-lg text-[10px] inline-flex items-center gap-1 border border-stone-200 transition active:scale-95"
+                                    title="Editar data de entrega, quantidades ou valores"
                                   >
-                                    <Sparkles className="w-3 h-3 text-stone-950" />
-                                    <span>Lançar Sobras</span>
+                                    <Edit3 className="w-3 h-3 text-stone-700" />
+                                    <span>Editar</span>
                                   </button>
-                                ) : (
-                                  <span className="text-[10px] text-stone-400 font-medium">Registrado</span>
-                                )}
+                                </div>
                               </td>
                             </tr>
                           ))}
@@ -3213,6 +3236,16 @@ Para acessar:
         isOpen={showTrashModal}
         onClose={() => setShowTrashModal(false)}
       />
+
+      {/* Modal Editar Pedido / Mudar Data */}
+      {orderToEdit && (
+        <EditOrderModal
+          order={orderToEdit}
+          isOpen={Boolean(orderToEdit)}
+          onClose={() => setOrderToEdit(null)}
+          prices={prices}
+        />
+      )}
     </div>
   );
 };

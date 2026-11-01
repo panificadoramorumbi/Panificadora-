@@ -662,6 +662,132 @@ export async function adminUpdateQuantity(params: {
 }
 
 /**
+ * Edit Order Details (Data de Entrega, Data do Pedido, Quantidades, Preços, Observações)
+ * Permite que o administrador (ou revendedor) altere a data de entrega escolhida errada,
+ * ajuste quantidades, preços unitários e observações, recalculando as métricas e atualizando o Firestore.
+ */
+export async function updateOrderDetails(params: {
+  order: Order;
+  deliveryDate?: string;
+  orderDate?: string;
+  qtySaltyPickup?: number;
+  qtySweetPickup?: number;
+  qtySaltyLeftover?: number;
+  qtySweetLeftover?: number;
+  unitPriceSalty?: number;
+  unitPriceSweet?: number;
+  notes?: string;
+  modifiedByName?: string;
+  modifiedByEmail?: string;
+  changeReason?: string;
+}): Promise<void> {
+  const {
+    order,
+    deliveryDate,
+    orderDate,
+    qtySaltyPickup,
+    qtySweetPickup,
+    qtySaltyLeftover,
+    qtySweetLeftover,
+    unitPriceSalty,
+    unitPriceSweet,
+    notes,
+    modifiedByName = 'Administrador',
+    modifiedByEmail,
+    changeReason,
+  } = params;
+
+  const effDeliveryDate = deliveryDate !== undefined && deliveryDate.trim() ? deliveryDate.trim() : (order.deliveryDate || order.orderDate);
+  const effOrderDate = orderDate !== undefined && orderDate.trim() ? orderDate.trim() : (order.orderDate || order.deliveryDate);
+  const effQtySalty = qtySaltyPickup !== undefined ? Math.max(0, Number(qtySaltyPickup) || 0) : order.qtySaltyPickup;
+  const effQtySweet = qtySweetPickup !== undefined ? Math.max(0, Number(qtySweetPickup) || 0) : order.qtySweetPickup;
+  const effPriceSalty = unitPriceSalty !== undefined && Number(unitPriceSalty) > 0 ? Number(unitPriceSalty) : order.unitPriceSalty;
+  const effPriceSweet = unitPriceSweet !== undefined && Number(unitPriceSweet) > 0 ? Number(unitPriceSweet) : order.unitPriceSweet;
+
+  let effSaltyLeft = order.leftoversRecorded ? (order.qtySaltyLeftover || 0) : 0;
+  let effSweetLeft = order.leftoversRecorded ? (order.qtySweetLeftover || 0) : 0;
+
+  if (qtySaltyLeftover !== undefined) {
+    effSaltyLeft = Math.max(0, Math.min(effQtySalty, Number(qtySaltyLeftover) || 0));
+  }
+  if (qtySweetLeftover !== undefined) {
+    effSweetLeft = Math.max(0, Math.min(effQtySweet, Number(qtySweetLeftover) || 0));
+  }
+
+  const metrics = calculateOrderMetrics({
+    qtySaltyPickup: effQtySalty,
+    qtySweetPickup: effQtySweet,
+    qtySaltyLeftover: effSaltyLeft,
+    qtySweetLeftover: effSweetLeft,
+    leftoversRecorded: order.leftoversRecorded || qtySaltyLeftover !== undefined || qtySweetLeftover !== undefined,
+    unitPriceSalty: effPriceSalty,
+    unitPriceSweet: effPriceSweet,
+    amountPaid: order.amountPaid || 0,
+  });
+
+  const paymentStatus =
+    (order.amountPaid || 0) >= metrics.finalTotal
+      ? 'pago'
+      : (order.amountPaid || 0) > 0
+      ? 'parcial'
+      : 'pendente';
+
+  const updateData: any = {
+    deliveryDate: effDeliveryDate,
+    orderDate: effOrderDate,
+    qtySaltyPickup: effQtySalty,
+    qtySweetPickup: effQtySweet,
+    unitPriceSalty: effPriceSalty,
+    unitPriceSweet: effPriceSweet,
+    expectedTotal: metrics.expectedTotal,
+    finalTotal: metrics.finalTotal,
+    balanceDue: metrics.balanceDue,
+    paymentStatus,
+    updatedAt: new Date().toISOString(),
+  };
+
+  if (notes !== undefined) {
+    updateData.notes = notes;
+  }
+
+  if (order.leftoversRecorded || qtySaltyLeftover !== undefined || qtySweetLeftover !== undefined) {
+    updateData.qtySaltyLeftover = metrics.qtySaltyLeftover;
+    updateData.qtySweetLeftover = metrics.qtySweetLeftover;
+    updateData.qtySaltySold = metrics.qtySaltySold;
+    updateData.qtySweetSold = metrics.qtySweetSold;
+    updateData.leftoversRecorded = true;
+  }
+
+  if (changeReason) {
+    updateData.lastModifiedReason = changeReason;
+  }
+  if (modifiedByName) {
+    updateData.lastModifiedBy = modifiedByName;
+  }
+
+  try {
+    await updateDoc(doc(db, 'orders', order.id), updateData);
+
+    // Send in-app notification if order belongs to a reseller
+    if (order.resellerId && order.resellerId !== 'varejo') {
+      try {
+        await sendNotification({
+          targetUserId: order.resellerId,
+          title: `Pedido ${order.orderNumber} Atualizado`,
+          message: `O pedido foi alterado: nova data de entrega para ${effDeliveryDate}. Total: R$ ${metrics.finalTotal.toFixed(2)}.`,
+          type: 'alteracao',
+          orderId: order.id,
+          orderNumber: order.orderNumber,
+          resellerId: order.resellerId,
+        });
+      } catch {}
+    }
+  } catch (error) {
+    handleFirestoreError(error, OperationType.UPDATE, `orders/${order.id}`);
+  }
+}
+
+/**
  * Register Payment / Settlement
  */
 export async function registerPayment(params: {
