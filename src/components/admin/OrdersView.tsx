@@ -22,6 +22,7 @@ import {
 } from 'lucide-react';
 import { Order, UserProfile, ProductPrices } from '../../types';
 import { EditOrderModal } from '../common/EditOrderModal';
+import { ClientBadge } from '../common/ClientBadge';
 import {
   formatCurrency,
   formatDate,
@@ -240,8 +241,8 @@ _Panificadora Morumbi — Sistema de Revenda_`;
   // Open record leftovers modal directly for an order
   const handleOpenRecordLeftovers = (order: Order) => {
     setOrderForLeftovers(order);
-    setAdminSaltyLeftover(0);
-    setAdminSweetLeftover(0);
+    setAdminSaltyLeftover(order.qtySaltyLeftover || 0);
+    setAdminSweetLeftover(order.qtySweetLeftover || 0);
     setAdminLeftoverError(null);
     setAdminLeftoverSuccess(null);
   };
@@ -678,12 +679,12 @@ _Panificadora Morumbi — Sistema de Revenda_`;
                   </div>
 
                   {/* Reseller Name & Delivery Date */}
-                  <div className="flex items-center justify-between">
+                  <div className="flex items-center justify-between gap-2">
                     <div>
-                      <span className="text-[10px] text-stone-400 uppercase font-bold block">
+                      <span className="text-[10px] text-stone-400 uppercase font-bold block mb-0.5">
                         Revendedor
                       </span>
-                      <span className="font-bold text-stone-900 text-xs">{order.resellerName}</span>
+                      <ClientBadge id={order.resellerId} name={order.resellerName} size="sm" />
                     </div>
                     <div className="text-right">
                       <span className="text-[10px] text-stone-400 uppercase font-bold block">
@@ -731,16 +732,22 @@ _Panificadora Morumbi — Sistema de Revenda_`;
 
                   {/* Action Buttons on Mobile (Full width touch targets) */}
                   <div className="space-y-2 pt-1">
-                    {!order.leftoversRecorded && order.status !== 'concluido' && order.paymentStatus !== 'pago' && (
-                      <button
-                        type="button"
-                        onClick={() => handleOpenRecordLeftovers(order)}
-                        className="w-full py-2.5 px-3 bg-amber-400 hover:bg-amber-500 active:scale-95 text-stone-950 font-black text-xs uppercase rounded-xl shadow-xs transition flex items-center justify-center gap-1.5"
-                      >
-                        <Sparkles className="w-4 h-4 text-stone-950" />
-                        <span>Lançar Sobras Deste Pedido</span>
-                      </button>
-                    )}
+                    <button
+                      type="button"
+                      onClick={() => handleOpenRecordLeftovers(order)}
+                      className={`w-full py-2.5 px-3 font-black text-xs uppercase rounded-xl shadow-xs transition flex items-center justify-center gap-1.5 active:scale-95 cursor-pointer ${
+                        order.leftoversRecorded
+                          ? 'bg-amber-100 hover:bg-amber-200 text-amber-950 border border-amber-300'
+                          : 'bg-amber-400 hover:bg-amber-500 text-stone-950'
+                      }`}
+                    >
+                      <Sparkles className="w-4 h-4 text-stone-950" />
+                      <span>
+                        {order.leftoversRecorded
+                          ? `Alterar Sobras (${order.qtySaltyLeftover}s / ${order.qtySweetLeftover}d)`
+                          : 'Colocar Sobras Deste Pedido'}
+                      </span>
+                    </button>
 
                     {order.paymentStatus !== 'pago' && (
                       <button
@@ -825,7 +832,9 @@ _Panificadora Morumbi — Sistema de Revenda_`;
                   {filteredOrders.map((order) => (
                     <tr key={order.id} className="hover:bg-stone-50 transition">
                       <td className="py-3.5 font-black text-stone-900">{order.orderNumber}</td>
-                      <td className="py-3.5 font-bold text-stone-800">{order.resellerName}</td>
+                      <td className="py-3.5">
+                        <ClientBadge id={order.resellerId} name={order.resellerName} size="sm" />
+                      </td>
                       <td className="py-3.5 text-stone-600">{formatDate(order.deliveryDate)}</td>
                       <td className="py-3.5 text-right font-medium">
                         <span className="text-amber-800">{order.qtySaltyPickup} salg</span> /{' '}
@@ -833,7 +842,7 @@ _Panificadora Morumbi — Sistema de Revenda_`;
                       </td>
                       <td className="py-3.5 text-right text-stone-600">
                         {order.leftoversRecorded ? (
-                          <span>
+                          <span className="font-medium text-stone-800">
                             {order.qtySaltyLeftover} salg / {order.qtySweetLeftover} doce
                           </span>
                         ) : (
@@ -862,17 +871,19 @@ _Panificadora Morumbi — Sistema de Revenda_`;
                       </td>
                       <td className="py-3.5 text-center">
                         <div className="flex items-center justify-center gap-1.5">
-                          {!order.leftoversRecorded && order.status !== 'concluido' && order.paymentStatus !== 'pago' && (
-                            <button
-                              type="button"
-                              onClick={() => handleOpenRecordLeftovers(order)}
-                              className="px-2.5 py-1.5 rounded-lg bg-amber-400 hover:bg-amber-500 active:scale-95 text-stone-950 font-black text-[11px] shadow-xs transition flex items-center gap-1 shrink-0 cursor-pointer"
-                              title="Lançar sobras deste pedido pelo cliente"
-                            >
-                              <Sparkles className="w-3.5 h-3.5 text-stone-950" />
-                              <span>Lançar Sobras</span>
-                            </button>
-                          )}
+                          <button
+                            type="button"
+                            onClick={() => handleOpenRecordLeftovers(order)}
+                            className={`px-2.5 py-1.5 rounded-lg font-black text-[11px] shadow-xs transition flex items-center gap-1 shrink-0 cursor-pointer active:scale-95 ${
+                              order.leftoversRecorded
+                                ? 'bg-amber-100 hover:bg-amber-200 text-amber-950 border border-amber-300'
+                                : 'bg-amber-400 hover:bg-amber-500 text-stone-950'
+                            }`}
+                            title={order.leftoversRecorded ? 'Alterar / Atualizar sobras já registradas' : 'Lançar sobras deste pedido'}
+                          >
+                            <Sparkles className="w-3.5 h-3.5 text-stone-950" />
+                            <span>{order.leftoversRecorded ? 'Alterar Sobras' : 'Lançar Sobras'}</span>
+                          </button>
                           {order.paymentStatus !== 'pago' && (
                             <button
                               type="button"
@@ -947,9 +958,10 @@ _Panificadora Morumbi — Sistema de Revenda_`;
                   <h3 className="text-base font-black text-stone-900">
                     Detalhes do Pedido {selectedOrder.orderNumber}
                   </h3>
-                  <p className="text-xs text-stone-500">
-                    Revendedor: {selectedOrder.resellerName}
-                  </p>
+                  <div className="flex items-center gap-1.5 mt-0.5">
+                    <span className="text-xs text-stone-500 font-medium">Cliente:</span>
+                    <ClientBadge id={selectedOrder.resellerId} name={selectedOrder.resellerName} size="sm" />
+                  </div>
                 </div>
               </div>
               <button
@@ -1079,6 +1091,28 @@ _Panificadora Morumbi — Sistema de Revenda_`;
               )}
 
               <div className="flex flex-wrap items-center justify-end gap-2 pt-2">
+                <button
+                  type="button"
+                  onClick={() => {
+                    const cur = selectedOrder;
+                    setSelectedOrder(null);
+                    handleOpenRecordLeftovers(cur);
+                  }}
+                  className={`px-4 py-2.5 font-black text-xs uppercase rounded-xl flex items-center gap-2 shadow-xs transition cursor-pointer active:scale-95 ${
+                    selectedOrder.leftoversRecorded
+                      ? 'bg-amber-100 hover:bg-amber-200 text-amber-950 border border-amber-300'
+                      : 'bg-amber-400 hover:bg-amber-500 text-stone-950'
+                  }`}
+                  title="Colocar ou alterar sobras deste pedido"
+                >
+                  <Sparkles className="w-4 h-4 text-stone-950" />
+                  <span>
+                    {selectedOrder.leftoversRecorded
+                      ? `Alterar Sobras (${selectedOrder.qtySaltyLeftover}s / ${selectedOrder.qtySweetLeftover}d)`
+                      : 'Colocar Sobras'}
+                  </span>
+                </button>
+
                 {selectedOrder.paymentStatus !== 'pago' && (
                   <button
                     type="button"

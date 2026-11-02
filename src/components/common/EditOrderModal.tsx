@@ -76,15 +76,16 @@ export const EditOrderModal: React.FC<EditOrderModalProps> = ({
     const saltyPrice = Number(unitPriceSalty) > 0 ? Number(unitPriceSalty) : order.unitPriceSalty;
     const sweetPrice = Number(unitPriceSweet) > 0 ? Number(unitPriceSweet) : order.unitPriceSweet;
 
-    const sLeft = order.leftoversRecorded ? Math.max(0, Number(qtySaltyLeftover) || 0) : 0;
-    const wLeft = order.leftoversRecorded ? Math.max(0, Number(qtySweetLeftover) || 0) : 0;
+    const sLeft = Math.max(0, Number(qtySaltyLeftover) || 0);
+    const wLeft = Math.max(0, Number(qtySweetLeftover) || 0);
+    const hasLeftovers = order.leftoversRecorded || sLeft > 0 || wLeft > 0;
 
     return calculateOrderMetrics({
       qtySaltyPickup: saltyPick,
       qtySweetPickup: sweetPick,
       qtySaltyLeftover: sLeft,
       qtySweetLeftover: wLeft,
-      leftoversRecorded: order.leftoversRecorded,
+      leftoversRecorded: hasLeftovers,
       unitPriceSalty: saltyPrice,
       unitPriceSweet: sweetPrice,
       amountPaid: order.amountPaid || 0,
@@ -137,8 +138,8 @@ export const EditOrderModal: React.FC<EditOrderModalProps> = ({
         orderDate: orderDate.trim(),
         qtySaltyPickup: saltyNum,
         qtySweetPickup: sweetNum,
-        qtySaltyLeftover: order.leftoversRecorded ? Number(qtySaltyLeftover) || 0 : undefined,
-        qtySweetLeftover: order.leftoversRecorded ? Number(qtySweetLeftover) || 0 : undefined,
+        qtySaltyLeftover: Number(qtySaltyLeftover) || 0,
+        qtySweetLeftover: Number(qtySweetLeftover) || 0,
         unitPriceSalty: Number(unitPriceSalty) || order.unitPriceSalty,
         unitPriceSweet: Number(unitPriceSweet) || order.unitPriceSweet,
         notes: notes.trim(),
@@ -343,21 +344,23 @@ export const EditOrderModal: React.FC<EditOrderModalProps> = ({
                 />
               </div>
 
-              {order.leftoversRecorded && (
-                <div className="pt-2 border-t border-stone-200">
-                  <label className="block text-[10px] font-bold text-amber-900 uppercase mb-0.5">
-                    Sobras Devolvidas
+              <div className="pt-2 border-t border-stone-200">
+                <div className="flex justify-between items-center mb-0.5">
+                  <label className="text-[10px] font-bold text-amber-900 uppercase">
+                    Sobras Devolvidas (Salgado)
                   </label>
-                  <input
-                    type="number"
-                    min="0"
-                    step="1"
-                    value={qtySaltyLeftover}
-                    onChange={(e) => setQtySaltyLeftover(e.target.value)}
-                    className="w-full px-3 py-1.5 bg-amber-50 border border-amber-300 rounded-xl text-xs font-black text-amber-950"
-                  />
+                  <span className="text-[9px] text-stone-500 font-medium">0 = vendeu tudo</span>
                 </div>
-              )}
+                <input
+                  type="number"
+                  min="0"
+                  step="1"
+                  value={qtySaltyLeftover}
+                  onChange={(e) => setQtySaltyLeftover(e.target.value)}
+                  placeholder="0"
+                  className="w-full px-3 py-1.5 bg-amber-50 border border-amber-300 rounded-xl text-xs font-black text-amber-950 focus:ring-2 focus:ring-amber-500"
+                />
+              </div>
             </div>
 
             {/* Sweet Bread */}
@@ -413,21 +416,23 @@ export const EditOrderModal: React.FC<EditOrderModalProps> = ({
                 />
               </div>
 
-              {order.leftoversRecorded && (
-                <div className="pt-2 border-t border-stone-200">
-                  <label className="block text-[10px] font-bold text-amber-900 uppercase mb-0.5">
-                    Sobras Devolvidas
+              <div className="pt-2 border-t border-stone-200">
+                <div className="flex justify-between items-center mb-0.5">
+                  <label className="text-[10px] font-bold text-amber-900 uppercase">
+                    Sobras Devolvidas (Doce)
                   </label>
-                  <input
-                    type="number"
-                    min="0"
-                    step="1"
-                    value={qtySweetLeftover}
-                    onChange={(e) => setQtySweetLeftover(e.target.value)}
-                    className="w-full px-3 py-1.5 bg-amber-50 border border-amber-300 rounded-xl text-xs font-black text-amber-950"
-                  />
+                  <span className="text-[9px] text-stone-500 font-medium">0 = vendeu tudo</span>
                 </div>
-              )}
+                <input
+                  type="number"
+                  min="0"
+                  step="1"
+                  value={qtySweetLeftover}
+                  onChange={(e) => setQtySweetLeftover(e.target.value)}
+                  placeholder="0"
+                  className="w-full px-3 py-1.5 bg-amber-50 border border-amber-300 rounded-xl text-xs font-black text-amber-950 focus:ring-2 focus:ring-amber-500"
+                />
+              </div>
             </div>
           </div>
 

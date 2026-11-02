@@ -42,6 +42,7 @@ import {
   buildWhatsAppLink,
   calculateOrderMetrics,
   sanitizeUsername,
+  getClientColor,
 } from '../../utils/formatters';
 import {
   updateUserProfile,
@@ -547,8 +548,8 @@ Para acessar:
   // Open record leftovers modal directly for an order
   const handleOpenRecordLeftovers = (order: Order) => {
     setOrderForLeftovers(order);
-    setAdminSaltyLeftover(0);
-    setAdminSweetLeftover(0);
+    setAdminSaltyLeftover(order.qtySaltyLeftover || 0);
+    setAdminSweetLeftover(order.qtySweetLeftover || 0);
     setAdminLeftoverError(null);
     setAdminLeftoverSuccess(null);
   };
@@ -950,6 +951,7 @@ Para acessar:
                   const isRevendedorProvisional =
                     (client.displayName || '').toLowerCase().trim() === 'revendedor' ||
                     (client.displayName || '').toLowerCase().trim() === 'sem nome';
+                  const cTheme = getClientColor(client.uid || client.displayName);
 
                   return (
                     <div
@@ -963,9 +965,9 @@ Para acessar:
                     >
                       <div className="flex items-center gap-3 overflow-hidden">
                         <div
-                          className={`w-9 h-9 rounded-full flex items-center justify-center font-bold text-xs shrink-0 shadow-xs ${
+                          className={`w-9 h-9 rounded-full flex items-center justify-center font-black text-xs shrink-0 shadow-xs ${
                             client.active
-                              ? 'bg-red-800 text-white'
+                              ? cTheme.accent
                               : 'bg-stone-300 text-stone-600'
                           }`}
                         >
@@ -1103,14 +1105,25 @@ Para acessar:
 
                 <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4 pb-5 border-b border-stone-100">
                   <div className="flex items-center gap-4">
-                    <div className="w-14 h-14 rounded-2xl bg-red-800 text-amber-300 flex items-center justify-center font-black text-xl shadow-md">
+                    <div
+                      className={`w-14 h-14 rounded-2xl flex items-center justify-center font-black text-xl shadow-md ${
+                        getClientColor(selectedClient.uid || selectedClient.displayName).accent
+                      }`}
+                    >
                       {selectedClient.displayName.charAt(0).toUpperCase()}
                     </div>
                     <div>
-                      <div className="flex items-center gap-2">
+                      <div className="flex items-center gap-2 flex-wrap">
                         <h3 className="text-xl font-black text-stone-900">
                           {selectedClient.displayName}
                         </h3>
+                        <span
+                          className={`px-2.5 py-0.5 rounded-full text-[10px] font-bold border ${
+                            getClientColor(selectedClient.uid || selectedClient.displayName).badge
+                          }`}
+                        >
+                          Revendedor
+                        </span>
                         <span
                           className={`px-2.5 py-0.5 rounded-full text-[10px] font-bold ${
                             selectedClient.active
@@ -1449,16 +1462,18 @@ Para acessar:
 
                           <div className="space-y-1.5 pt-1">
                             <div className="flex items-center gap-2">
-                              {!o.leftoversRecorded && o.status !== 'concluido' && o.paymentStatus !== 'pago' && (
-                                <button
-                                  type="button"
-                                  onClick={() => handleOpenRecordLeftovers(o)}
-                                  className="flex-1 py-2 bg-amber-500 hover:bg-amber-600 text-stone-950 font-black rounded-xl text-xs flex items-center justify-center gap-1.5 shadow-sm transition active:scale-[0.98]"
-                                >
-                                  <Sparkles className="w-3.5 h-3.5 text-stone-950" />
-                                  <span>Lançar Sobras</span>
-                                </button>
-                              )}
+                              <button
+                                type="button"
+                                onClick={() => handleOpenRecordLeftovers(o)}
+                                className={`flex-1 py-2 font-black rounded-xl text-xs flex items-center justify-center gap-1.5 shadow-2xs transition active:scale-[0.98] cursor-pointer ${
+                                  o.leftoversRecorded
+                                    ? 'bg-amber-100 hover:bg-amber-200 text-amber-950 border border-amber-300'
+                                    : 'bg-amber-400 hover:bg-amber-500 text-stone-950'
+                                }`}
+                              >
+                                <Sparkles className="w-3.5 h-3.5 text-stone-950" />
+                                <span>{o.leftoversRecorded ? 'Alterar Sobras' : 'Lançar Sobras'}</span>
+                              </button>
                               <button
                                 type="button"
                                 onClick={() => setOrderToEdit(o)}

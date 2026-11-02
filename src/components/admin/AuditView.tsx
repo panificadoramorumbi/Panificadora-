@@ -7,17 +7,35 @@ import {
   Calendar,
   AlertTriangle,
   CheckCircle,
+  CheckCircle2,
   Clock,
   History,
   X,
   ArrowRight,
   ShieldCheck,
   FileText,
+  Sparkles,
+  DollarSign,
+  MessageCircle,
+  ExternalLink,
+  ChevronRight,
 } from 'lucide-react';
 import { Order, UserProfile, AuditLog } from '../../types';
-import { formatCurrency, formatDate, formatDateTime, calculateOrderMetrics } from '../../utils/formatters';
-import { adminUpdateQuantity } from '../../services/dataService';
+import {
+  formatCurrency,
+  formatDate,
+  formatDateTime,
+  calculateOrderMetrics,
+  getClientColor,
+  buildWhatsAppLink,
+} from '../../utils/formatters';
+import {
+  adminUpdateQuantity,
+  recordLeftovers,
+  confirmOrderPaidOnTheSpot,
+} from '../../services/dataService';
 import { useAuth } from '../../context/AuthContext';
+import { ClientBadge } from '../common/ClientBadge';
 
 interface AuditViewProps {
   orders: Order[];
@@ -56,6 +74,123 @@ export const AuditView: React.FC<AuditViewProps> = ({
   const [isSubmitting, setIsSubmitting] = useState<boolean>(false);
   const [errorMsg, setErrorMsg] = useState<string | null>(null);
   const [activeTab, setActiveTab] = useState<'orders' | 'logs'>('orders');
+
+  // Modal: View single client's orders
+  const [selectedClientForAuditModal, setSelectedClientForAuditModal] = useState<{
+    clientId: string;
+    clientName: string;
+  } | null>(null);
+
+  // Modal: Record/Edit Leftovers directly in AuditView
+  const [orderForLeftovers, setOrderForLeftovers] = useState<Order | null>(null);
+  const [auditSaltyLeftover, setAuditSaltyLeftover] = useState<number>(0);
+  const [auditSweetLeftover, setAuditSweetLeftover] = useState<number>(0);
+  const [isSavingAuditLeftovers, setIsSavingAuditLeftovers] = useState<boolean>(false);
+  const [auditLeftoverError, setAuditLeftoverError] = useState<string | null>(null);
+  const [auditLeftoverSuccess, setAuditLeftoverSuccess] = useState<string | null>(null);
+
+  const handleOpenLeftovers = (order: Order) => {
+    setOrderForLeftovers(order);
+    setAuditSaltyLeftover(order.qtySaltyLeftover || 0);
+    setAuditSweetLeftover(order.qtySweetLeftover || 0);
+    setAuditLeftoverError(null);
+    setAuditLeftoverSuccess(null);
+  };
+
+  const handleSaveAuditLeftovers = async (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!orderForLeftovers || !currentUser) return;
+    setAuditLeftoverError(null);
+
+    const sLeft = Number(auditSaltyLeftover) || 0;
+    const wLeft = Number(auditSweetLeftover) || 0;
+
+    if (sLeft < 0 || wLeft < 0) {
+      setAuditLeftoverError('A quantidade de sobras não pode ser negativa.');
+      return;
+    }
+    if (sLeft > orderForLeftovers.qtySaltyPickup) {
+      setAuditLeftoverError(
+        `A sobra de salgado (${sLeft}) não pode exceder a retirada (${orderForLeftovers.qtySaltyPickup}).`
+      );
+      return;
+    }
+    if (wLeft > orderForLeftovers.qtySweetPickup) {
+      setAuditLeftoverError(
+        `A sobra de doce (${wLeft}) não pode exceder a retirada (${orderForLeftovers.qtySweetPickup}).`
+      );
+      return;
+    }
+
+    setIsSavingAuditLeftovers(true);
+    try {
+      await recordLeftovers({
+        order: orderForLeftovers,
+        qtySaltyLeftover: sLeft,
+        qtySweetLeftover: wLeft,
+        recordedByUid: currentUser.uid,
+        recordedByName: 'Administrador (Auditoria)',
+      });
+      setAuditLeftoverSuccess(`Sobras gravadas com sucesso para ${orderForLeftovers.resellerName}!`);
+      setTimeout(() => {
+        setOrderForLeftovers(null);
+        setAuditLeftoverSuccess(null);
+      }, 1300);
+    } catch (err: any) {
+      setAuditLeftoverError('Erro ao gravar sobras: ' + (err?.message || err));
+    } finally {
+      setIsSavingAuditLeftovers(false);
+    }
+  };
+
+  const handleQuickPayOrder = async (order: Order) => {
+    if (!currentUser) return;
+    const confirmMsg = `Confirmar recebimento do ${order.orderNumber} (${formatCurrency(
+      order.balanceDue || order.finalTotal
+    )}) na hora?\n\nO pedido será quitado e concluído (sem sobras pendentes).`;
+    if (!window.confirm(confirmMsg)) return;
+
+    try {
+      await confirmOrderPaidOnTheSpot({
+        order,
+        paymentMethod: 'pix',
+        adminId: currentUser.uid,
+        adminName: 'Administrador',
+      });
+    } catch (err: any) {
+      alert('Erro ao confirmar pagamento: ' + (err?.message || err));
+    }
+  };
+
+  const handleShareOrderWhatsApp = (order: Order) => {
+    const client = clients.find((c) => c.uid === order.resellerId);
+    const phone = client?.phone || '';
+    if (!phone) {
+      alert(`O cliente ${order.resellerName} não possui telefone cadastrado.`);
+      return;
+    }
+
+    const text = `🥖 *PANIFICADORA MORUMBI* 🥖
+*Resumo do Pedido ${order.orderNumber}*
+Cliente: *${order.resellerName}*
+Data de Entrega: ${formatDate(order.deliveryDate)}
+
+📦 *Retiradas:* ${order.qtySaltyPickup} salgados / ${order.qtySweetPickup} doces
+🍞 *Sobras:* ${
+      order.leftoversRecorded
+        ? `${order.qtySaltyLeftover} salgados / ${order.qtySweetLeftover} doces`
+        : 'Pendente de registro'
+    }
+🛒 *Vendido:* ${order.qtySaltySold} salgados / ${order.qtySweetSold} doces
+
+💰 *Valor Final:* ${formatCurrency(order.finalTotal)}
+💳 *Valor Pago:* ${formatCurrency(order.amountPaid)}
+🔴 *Saldo a Pagar:* ${formatCurrency(order.balanceDue)}
+Situação: ${order.paymentStatus === 'pago' ? '✅ QUITADO' : '⏳ PENDENTE'}`;
+
+    const url = buildWhatsAppLink(phone, text);
+    window.open(url, '_blank');
+  };
 
   // Populate form when an order is opened for correction
   const handleOpenCorrection = (order: Order) => {
@@ -115,6 +250,41 @@ export const AuditView: React.FC<AuditViewProps> = ({
     editSaltyLeftover,
     editSweetLeftover,
   ]);
+
+  // Orders and summary for the selected client's audit modal
+  const selectedClientData = useMemo(() => {
+    if (!selectedClientForAuditModal) return null;
+    const clientOrders = orders.filter(
+      (o) => o.resellerId === selectedClientForAuditModal.clientId
+    );
+    const totalPickup = clientOrders.reduce(
+      (sum, o) => sum + (o.qtySaltyPickup + o.qtySweetPickup),
+      0
+    );
+    const totalLeftovers = clientOrders.reduce(
+      (sum, o) => sum + (o.qtySaltyLeftover + o.qtySweetLeftover),
+      0
+    );
+    const totalSold = clientOrders.reduce(
+      (sum, o) => sum + (o.qtySaltySold + o.qtySweetSold),
+      0
+    );
+    const finalTotal = clientOrders.reduce((sum, o) => sum + (o.finalTotal || 0), 0);
+    const amountPaid = clientOrders.reduce((sum, o) => sum + (o.amountPaid || 0), 0);
+    const balanceDue = clientOrders.reduce((sum, o) => sum + (o.balanceDue || 0), 0);
+    const clientProfile = clients.find((c) => c.uid === selectedClientForAuditModal.clientId);
+
+    return {
+      clientOrders,
+      totalPickup,
+      totalLeftovers,
+      totalSold,
+      finalTotal,
+      amountPaid,
+      balanceDue,
+      clientProfile,
+    };
+  }, [selectedClientForAuditModal, orders, clients]);
 
   // Handle Save Correction
   const handleSaveCorrection = async () => {
@@ -275,6 +445,16 @@ export const AuditView: React.FC<AuditViewProps> = ({
             </select>
           </div>
 
+          {/* Informative Banner */}
+          <div className="mb-4 p-3 bg-amber-50/80 border border-amber-200 rounded-2xl flex items-center justify-between text-xs text-amber-950">
+            <span className="flex items-center gap-2 font-bold">
+              <Sparkles className="w-4 h-4 text-amber-600 shrink-0" />
+              <span>
+                💡 <strong>Dica:</strong> Clique na etiqueta colorida de qualquer cliente para abrir a janela exclusiva e ver apenas os pedidos dele, ou use o botão <strong>Colocar Sobras</strong> para lançar/alterar na hora.
+              </span>
+            </span>
+          </div>
+
           {/* Orders Audit Table */}
           <div className="bg-white rounded-3xl p-6 shadow-sm border border-stone-200 overflow-hidden">
             <div className="overflow-x-auto">
@@ -290,7 +470,7 @@ export const AuditView: React.FC<AuditViewProps> = ({
                     <th className="pb-3 text-right">Final</th>
                     <th className="pb-3 text-right">Pago</th>
                     <th className="pb-3 text-right">Saldo</th>
-                    <th className="pb-3 text-center">Ação Excepcional</th>
+                    <th className="pb-3 text-center">Ações & Sobras</th>
                   </tr>
                 </thead>
                 <tbody className="divide-y divide-stone-100">
@@ -304,15 +484,29 @@ export const AuditView: React.FC<AuditViewProps> = ({
                     filteredOrders.map((order) => (
                       <tr key={order.id} className="hover:bg-stone-50 transition">
                         <td className="py-3 font-bold text-stone-900">{order.orderNumber}</td>
-                        <td className="py-3 font-medium text-stone-800">{order.resellerName}</td>
+                        <td className="py-3">
+                          <ClientBadge
+                            id={order.resellerId}
+                            name={order.resellerName}
+                            onClick={() =>
+                              setSelectedClientForAuditModal({
+                                clientId: order.resellerId,
+                                clientName: order.resellerName,
+                              })
+                            }
+                            size="sm"
+                          />
+                        </td>
                         <td className="py-3 text-right font-medium">
                           {order.qtySaltyPickup} salg / {order.qtySweetPickup} doce
                         </td>
                         <td className="py-3 text-right text-stone-600">
                           {order.leftoversRecorded ? (
-                            `${order.qtySaltyLeftover} salg / ${order.qtySweetLeftover} doce`
+                            <span className="font-medium text-stone-800">
+                              {order.qtySaltyLeftover} salg / {order.qtySweetLeftover} doce
+                            </span>
                           ) : (
-                            <span className="text-amber-600 italic">Pendente</span>
+                            <span className="text-amber-600 font-bold italic">Pendente</span>
                           )}
                         </td>
                         <td className="py-3 text-right font-bold text-stone-800">
@@ -331,14 +525,31 @@ export const AuditView: React.FC<AuditViewProps> = ({
                           {formatCurrency(order.balanceDue)}
                         </td>
                         <td className="py-3 text-center">
-                          {/* BOTÃO OBRIGATÓRIO: "Alterar Quantidade" */}
-                          <button
-                            onClick={() => handleOpenCorrection(order)}
-                            className="px-3 py-1.5 rounded-xl bg-amber-400 hover:bg-amber-500 active:scale-95 text-stone-950 font-black text-[11px] shadow-sm transition flex items-center gap-1.5 mx-auto"
-                          >
-                            <Edit3 className="w-3.5 h-3.5 text-stone-900" />
-                            <span>Alterar Quantidade</span>
-                          </button>
+                          <div className="flex items-center justify-center gap-1.5 flex-wrap">
+                            <button
+                              type="button"
+                              onClick={() => handleOpenLeftovers(order)}
+                              className={`px-2.5 py-1.5 rounded-xl font-black text-[11px] shadow-2xs transition flex items-center gap-1 active:scale-95 cursor-pointer ${
+                                order.leftoversRecorded
+                                  ? 'bg-amber-100 hover:bg-amber-200 text-amber-950 border border-amber-300'
+                                  : 'bg-amber-400 hover:bg-amber-500 text-stone-950'
+                              }`}
+                              title={order.leftoversRecorded ? 'Alterar sobras já registradas' : 'Lançar sobras deste pedido'}
+                            >
+                              <Sparkles className="w-3.5 h-3.5 text-stone-950" />
+                              <span>{order.leftoversRecorded ? 'Alterar Sobras' : 'Colocar Sobras'}</span>
+                            </button>
+
+                            <button
+                              type="button"
+                              onClick={() => handleOpenCorrection(order)}
+                              className="px-2.5 py-1.5 rounded-xl bg-stone-100 hover:bg-stone-200 active:scale-95 text-stone-800 font-bold text-[11px] shadow-2xs transition flex items-center gap-1"
+                              title="Correção Excepcional de Quantidades (Auditoria)"
+                            >
+                              <Edit3 className="w-3.5 h-3.5 text-stone-700" />
+                              <span>Alterar Qtd</span>
+                            </button>
+                          </div>
                         </td>
                       </tr>
                     ))
@@ -620,6 +831,436 @@ export const AuditView: React.FC<AuditViewProps> = ({
                 </button>
               </div>
             </div>
+          </div>
+        </div>
+      )}
+
+      {/* JANELA EXCLUSIVA DO CLIENTE (AUDITORIA DE PEDIDOS) */}
+      {selectedClientForAuditModal && selectedClientData && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 backdrop-blur-xs p-3 sm:p-4 overflow-y-auto animate-in fade-in duration-200">
+          <div className="bg-white rounded-3xl max-w-3xl w-full my-6 shadow-2xl border border-stone-200 overflow-hidden flex flex-col max-h-[92vh]">
+            {/* Modal Header */}
+            <div className="p-4 sm:p-5 bg-gradient-to-r from-stone-900 via-red-950 to-stone-900 text-white flex items-center justify-between shrink-0 shadow-md">
+              <div className="flex items-center gap-3">
+                <div className="w-10 h-10 rounded-2xl bg-amber-400 text-stone-950 flex items-center justify-center font-black shadow-inner">
+                  <FileText className="w-5 h-5" />
+                </div>
+                <div>
+                  <div className="flex items-center gap-2 flex-wrap">
+                    <h3 className="text-base sm:text-lg font-black tracking-tight text-white">
+                      Pedidos do Cliente
+                    </h3>
+                    <ClientBadge
+                      id={selectedClientForAuditModal.clientId}
+                      name={selectedClientForAuditModal.clientName}
+                      size="sm"
+                    />
+                  </div>
+                  <p className="text-xs text-stone-300">
+                    Visualização exclusiva de todos os pedidos de {selectedClientForAuditModal.clientName}
+                  </p>
+                </div>
+              </div>
+
+              <button
+                type="button"
+                onClick={() => setSelectedClientForAuditModal(null)}
+                className="p-2 rounded-xl text-stone-300 hover:text-white hover:bg-white/10 transition cursor-pointer"
+                aria-label="Fechar"
+              >
+                <X className="w-5 h-5" />
+              </button>
+            </div>
+
+            {/* Modal Body */}
+            <div className="p-4 sm:p-6 overflow-y-auto space-y-4 flex-1 text-xs">
+              {/* Summary KPIs */}
+              <div className="grid grid-cols-2 sm:grid-cols-4 gap-2.5">
+                <div className="p-3 bg-stone-50 border border-stone-200 rounded-2xl text-center">
+                  <span className="text-[10px] text-stone-400 uppercase font-bold block">
+                    Pães Retirados
+                  </span>
+                  <span className="text-base font-black text-stone-800">
+                    {selectedClientData.totalPickup} un
+                  </span>
+                </div>
+                <div className="p-3 bg-amber-50/80 border border-amber-200 rounded-2xl text-center">
+                  <span className="text-[10px] text-amber-800 uppercase font-bold block">
+                    Sobras Devolvidas
+                  </span>
+                  <span className="text-base font-black text-amber-900">
+                    {selectedClientData.totalLeftovers} un
+                  </span>
+                </div>
+                <div className="p-3 bg-emerald-50/80 border border-emerald-200 rounded-2xl text-center">
+                  <span className="text-[10px] text-emerald-800 uppercase font-bold block">
+                    Pães Vendidos
+                  </span>
+                  <span className="text-base font-black text-emerald-950">
+                    {selectedClientData.totalSold} un
+                  </span>
+                </div>
+                <div className="p-3 bg-red-50/80 border border-red-200 rounded-2xl text-center">
+                  <span className="text-[10px] text-rose-800 uppercase font-bold block">
+                    Saldo a Pagar
+                  </span>
+                  <span className="text-base font-black text-rose-700">
+                    {formatCurrency(selectedClientData.balanceDue)}
+                  </span>
+                </div>
+              </div>
+
+              {/* Financial mini banner */}
+              <div className="p-3 bg-stone-50 border border-stone-200 rounded-2xl flex items-center justify-between text-xs flex-wrap gap-2">
+                <div className="flex gap-4 flex-wrap">
+                  <span>
+                    <strong className="text-stone-500">Total Realizado:</strong>{' '}
+                    <strong className="text-stone-900">{formatCurrency(selectedClientData.finalTotal)}</strong>
+                  </span>
+                  <span>
+                    <strong className="text-stone-500">Total Já Pago:</strong>{' '}
+                    <strong className="text-emerald-700">{formatCurrency(selectedClientData.amountPaid)}</strong>
+                  </span>
+                </div>
+                <span className="text-[11px] font-bold text-stone-500">
+                  {selectedClientData.clientOrders.length} pedido(s) cadastrado(s)
+                </span>
+              </div>
+
+              {/* Orders List */}
+              <div className="space-y-3">
+                <h4 className="font-black text-stone-900 text-xs uppercase tracking-wider flex items-center gap-1.5">
+                  <Clock className="w-3.5 h-3.5 text-stone-600" />
+                  <span>Histórico de Pedidos de {selectedClientForAuditModal.clientName}</span>
+                </h4>
+
+                {selectedClientData.clientOrders.length === 0 ? (
+                  <div className="text-center py-8 text-stone-400 italic bg-stone-50 rounded-2xl">
+                    Nenhum pedido encontrado para este cliente.
+                  </div>
+                ) : (
+                  selectedClientData.clientOrders.map((order) => (
+                    <div
+                      key={order.id}
+                      className="p-3.5 bg-stone-50/80 hover:bg-stone-50 border border-stone-200 rounded-2xl space-y-2.5 transition"
+                    >
+                      <div className="flex items-center justify-between flex-wrap gap-2">
+                        <div className="flex items-center gap-2 flex-wrap">
+                          <span className="font-black text-stone-900 text-sm">
+                            {order.orderNumber}
+                          </span>
+                          <span
+                            className={`px-2 py-0.5 rounded-full text-[10px] font-bold ${
+                              order.paymentStatus === 'pago'
+                                ? 'bg-emerald-100 text-emerald-800'
+                                : 'bg-rose-100 text-rose-800'
+                            }`}
+                          >
+                            {order.paymentStatus === 'pago' ? 'Quitado' : 'Pendente'}
+                          </span>
+                          <span
+                            className={`px-2 py-0.5 rounded-full text-[10px] font-bold ${
+                              order.leftoversRecorded
+                                ? 'bg-stone-200 text-stone-800'
+                                : 'bg-amber-200 text-amber-900'
+                            }`}
+                          >
+                            {order.leftoversRecorded ? 'Sobras OK' : 'Aguardando Sobras'}
+                          </span>
+                        </div>
+                        <span className="text-xs text-stone-600 font-medium">
+                          Entrega: <strong className="text-stone-900">{formatDate(order.deliveryDate)}</strong>
+                        </span>
+                      </div>
+
+                      <div className="grid grid-cols-3 gap-2 text-center bg-white p-2.5 rounded-xl border border-stone-200">
+                        <div>
+                          <span className="text-[9px] uppercase font-bold text-stone-400 block">
+                            Retirada
+                          </span>
+                          <span className="font-bold text-stone-800 text-[11px]">
+                            {order.qtySaltyPickup}s / {order.qtySweetPickup}d
+                          </span>
+                        </div>
+                        <div>
+                          <span className="text-[9px] uppercase font-bold text-stone-400 block">
+                            Sobras
+                          </span>
+                          <span className="font-bold text-amber-700 text-[11px]">
+                            {order.leftoversRecorded
+                              ? `${order.qtySaltyLeftover}s / ${order.qtySweetLeftover}d`
+                              : 'Pendente'}
+                          </span>
+                        </div>
+                        <div>
+                          <span className="text-[9px] uppercase font-bold text-stone-400 block">
+                            Vendido
+                          </span>
+                          <span className="font-black text-stone-900 text-[11px]">
+                            {order.qtySaltySold}s / {order.qtySweetSold}d
+                          </span>
+                        </div>
+                      </div>
+
+                      <div className="flex items-center justify-between text-xs pt-1 flex-wrap gap-2">
+                        <div>
+                          <span className="text-stone-500 font-medium">Final: </span>
+                          <span className="font-bold text-stone-900">{formatCurrency(order.finalTotal)}</span>
+                          <span className="text-stone-400 mx-1.5">•</span>
+                          <span className="text-stone-500 font-medium">Pago: </span>
+                          <span className="font-bold text-emerald-700">{formatCurrency(order.amountPaid)}</span>
+                        </div>
+                        <div>
+                          <span className="text-stone-500 font-medium">Saldo: </span>
+                          <span className="font-black text-rose-700">{formatCurrency(order.balanceDue)}</span>
+                        </div>
+                      </div>
+
+                      {/* Direct Actions inside Client Window */}
+                      <div className="flex items-center justify-end gap-1.5 pt-1.5 border-t border-stone-200/80 flex-wrap">
+                        <button
+                          type="button"
+                          onClick={() => handleOpenLeftovers(order)}
+                          className={`px-3 py-1.5 font-black text-xs uppercase rounded-xl transition flex items-center gap-1 active:scale-95 cursor-pointer ${
+                            order.leftoversRecorded
+                              ? 'bg-amber-100 hover:bg-amber-200 text-amber-950 border border-amber-300'
+                              : 'bg-amber-400 hover:bg-amber-500 text-stone-950'
+                          }`}
+                          title="Colocar ou alterar sobras deste pedido"
+                        >
+                          <Sparkles className="w-3.5 h-3.5" />
+                          <span>{order.leftoversRecorded ? 'Alterar Sobras' : 'Colocar Sobras'}</span>
+                        </button>
+
+                        <button
+                          type="button"
+                          onClick={() => handleOpenCorrection(order)}
+                          className="px-3 py-1.5 bg-stone-200 hover:bg-stone-300 active:scale-95 text-stone-800 font-bold text-xs rounded-xl transition flex items-center gap-1"
+                          title="Alterar quantidades e auditar"
+                        >
+                          <Edit3 className="w-3.5 h-3.5" />
+                          <span>Alterar Qtd</span>
+                        </button>
+
+                        {order.paymentStatus !== 'pago' && (
+                          <button
+                            type="button"
+                            onClick={() => handleQuickPayOrder(order)}
+                            className="px-3 py-1.5 bg-emerald-600 hover:bg-emerald-700 active:scale-95 text-white font-bold text-xs rounded-xl transition flex items-center gap-1"
+                            title="Quitar pedido na hora"
+                          >
+                            <DollarSign className="w-3.5 h-3.5" />
+                            <span>Quitar</span>
+                          </button>
+                        )}
+
+                        <button
+                          type="button"
+                          onClick={() => handleShareOrderWhatsApp(order)}
+                          className="p-1.5 bg-emerald-50 hover:bg-emerald-100 active:scale-95 text-emerald-700 rounded-xl transition"
+                          title="Enviar comprovante no WhatsApp"
+                        >
+                          <MessageCircle className="w-4 h-4" />
+                        </button>
+                      </div>
+                    </div>
+                  ))
+                )}
+              </div>
+            </div>
+
+            {/* Modal Footer */}
+            <div className="p-4 bg-stone-100 border-t border-stone-200 flex justify-end shrink-0">
+              <button
+                type="button"
+                onClick={() => setSelectedClientForAuditModal(null)}
+                className="px-5 py-2.5 bg-stone-900 hover:bg-stone-800 text-white font-bold text-xs rounded-xl transition cursor-pointer"
+              >
+                Fechar Janela do Cliente
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* MODAL: COLOCAR / ALTERAR SOBRAS (AUDITORIA) */}
+      {orderForLeftovers && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 backdrop-blur-xs p-4 overflow-y-auto">
+          <div className="w-full max-w-md bg-white rounded-3xl p-6 sm:p-7 shadow-2xl border border-stone-200 my-8">
+            <div className="flex items-center justify-between pb-4 border-b border-stone-100">
+              <div className="flex items-center gap-2.5">
+                <div className="w-10 h-10 rounded-2xl bg-amber-500 text-stone-950 flex items-center justify-center font-bold">
+                  <Sparkles className="w-5 h-5" />
+                </div>
+                <div>
+                  <h3 className="text-base font-black text-stone-900">
+                    {orderForLeftovers.leftoversRecorded ? 'Alterar Sobras' : 'Colocar Sobras'}
+                  </h3>
+                  <div className="flex items-center gap-1.5 mt-0.5">
+                    <span className="text-xs text-stone-500">Pedido {orderForLeftovers.orderNumber} -</span>
+                    <ClientBadge id={orderForLeftovers.resellerId} name={orderForLeftovers.resellerName} size="sm" />
+                  </div>
+                </div>
+              </div>
+              <button
+                type="button"
+                onClick={() => setOrderForLeftovers(null)}
+                className="p-1.5 rounded-full text-stone-400 hover:text-stone-700 cursor-pointer"
+              >
+                <X className="w-5 h-5" />
+              </button>
+            </div>
+
+            <form onSubmit={handleSaveAuditLeftovers} className="space-y-4 mt-5 text-xs">
+              {auditLeftoverError && (
+                <div className="p-3 rounded-xl bg-rose-50 border border-rose-200 text-rose-800 font-bold flex items-center gap-2">
+                  <AlertTriangle className="w-4 h-4 shrink-0 text-rose-600" />
+                  <span>{auditLeftoverError}</span>
+                </div>
+              )}
+
+              {auditLeftoverSuccess && (
+                <div className="p-3 rounded-xl bg-emerald-50 border border-emerald-200 text-emerald-800 font-bold flex items-center gap-2">
+                  <CheckCircle2 className="w-4 h-4 shrink-0 text-emerald-600" />
+                  <span>{auditLeftoverSuccess}</span>
+                </div>
+              )}
+
+              {/* Salty Leftover */}
+              <div className="bg-white p-3.5 rounded-2xl border border-stone-200 space-y-2">
+                <div className="flex justify-between items-center">
+                  <label className="font-bold text-stone-800">
+                    Sobras de Pão Salgado (unidades)
+                  </label>
+                  <span className="text-[11px] text-stone-500 font-medium">
+                    Retirados: {orderForLeftovers.qtySaltyPickup} un
+                  </span>
+                </div>
+                <input
+                  type="number"
+                  min="0"
+                  max={orderForLeftovers.qtySaltyPickup}
+                  value={auditSaltyLeftover}
+                  onChange={(e) => setAuditSaltyLeftover(Math.max(0, parseInt(e.target.value) || 0))}
+                  className="w-full px-3.5 py-2.5 bg-stone-50 border border-stone-300 rounded-xl font-black text-sm text-stone-900"
+                />
+                <div className="flex gap-1.5">
+                  <button
+                    type="button"
+                    onClick={() => setAuditSaltyLeftover(0)}
+                    className="flex-1 py-1 bg-stone-100 hover:bg-stone-200 text-stone-700 font-bold rounded-lg text-[10px]"
+                  >
+                    Vendeu Tudo (0 sobra)
+                  </button>
+                  {[5, 10, 20].map((v) => (
+                    <button
+                      key={v}
+                      type="button"
+                      onClick={() =>
+                        setAuditSaltyLeftover(Math.min(orderForLeftovers.qtySaltyPickup, v))
+                      }
+                      className="px-2 py-1 bg-stone-100 hover:bg-stone-200 text-stone-700 font-bold rounded-lg text-[10px]"
+                    >
+                      {v} un
+                    </button>
+                  ))}
+                </div>
+              </div>
+
+              {/* Sweet Leftover */}
+              <div className="bg-white p-3.5 rounded-2xl border border-stone-200 space-y-2">
+                <div className="flex justify-between items-center">
+                  <label className="font-bold text-stone-800">
+                    Sobras de Pão Doce (unidades)
+                  </label>
+                  <span className="text-[11px] text-stone-500 font-medium">
+                    Retirados: {orderForLeftovers.qtySweetPickup} un
+                  </span>
+                </div>
+                <input
+                  type="number"
+                  min="0"
+                  max={orderForLeftovers.qtySweetPickup}
+                  value={auditSweetLeftover}
+                  onChange={(e) => setAuditSweetLeftover(Math.max(0, parseInt(e.target.value) || 0))}
+                  className="w-full px-3.5 py-2.5 bg-stone-50 border border-stone-300 rounded-xl font-black text-sm text-stone-900"
+                />
+                <div className="flex gap-1.5">
+                  <button
+                    type="button"
+                    onClick={() => setAuditSweetLeftover(0)}
+                    className="flex-1 py-1 bg-stone-100 hover:bg-stone-200 text-stone-700 font-bold rounded-lg text-[10px]"
+                  >
+                    Vendeu Tudo (0 sobra)
+                  </button>
+                  {[5, 10].map((v) => (
+                    <button
+                      key={v}
+                      type="button"
+                      onClick={() =>
+                        setAuditSweetLeftover(Math.min(orderForLeftovers.qtySweetPickup, v))
+                      }
+                      className="px-2 py-1 bg-stone-100 hover:bg-stone-200 text-stone-700 font-bold rounded-lg text-[10px]"
+                    >
+                      {v} un
+                    </button>
+                  ))}
+                </div>
+              </div>
+
+              {/* Live calculation */}
+              {(() => {
+                const sSold = Math.max(0, orderForLeftovers.qtySaltyPickup - auditSaltyLeftover);
+                const wSold = Math.max(0, orderForLeftovers.qtySweetPickup - auditSweetLeftover);
+                const finalTot =
+                  sSold * orderForLeftovers.unitPriceSalty +
+                  wSold * orderForLeftovers.unitPriceSweet;
+                const bal = Math.max(0, finalTot - (orderForLeftovers.amountPaid || 0));
+
+                return (
+                  <div className="p-3.5 bg-amber-50 rounded-2xl border border-amber-300 space-y-1.5">
+                    <span className="font-extrabold text-[10px] uppercase text-amber-900 block">
+                      Cálculo de Venda Efetiva do Pedido
+                    </span>
+                    <div className="flex justify-between font-bold text-stone-800">
+                      <span>Pão Salgado Vendido:</span>
+                      <span>{sSold} un</span>
+                    </div>
+                    <div className="flex justify-between font-bold text-stone-800">
+                      <span>Pão Doce Vendido:</span>
+                      <span>{wSold} un</span>
+                    </div>
+                    <div className="pt-2 border-t border-amber-200 flex justify-between font-black text-stone-900 text-xs">
+                      <span>Novo Valor Final da Conta:</span>
+                      <span className="text-sm font-black text-amber-950">{formatCurrency(finalTot)}</span>
+                    </div>
+                    <div className="flex justify-between font-black text-rose-700 text-xs">
+                      <span>Saldo a Pagar:</span>
+                      <span>{formatCurrency(bal)}</span>
+                    </div>
+                  </div>
+                );
+              })()}
+
+              <div className="pt-2 flex items-center justify-end gap-2.5 border-t border-stone-100">
+                <button
+                  type="button"
+                  disabled={isSavingAuditLeftovers}
+                  onClick={() => setOrderForLeftovers(null)}
+                  className="px-4 py-2.5 font-bold text-stone-600 hover:text-stone-900 rounded-xl"
+                >
+                  Cancelar
+                </button>
+                <button
+                  type="submit"
+                  disabled={isSavingAuditLeftovers}
+                  className="px-5 py-2.5 bg-red-800 hover:bg-red-900 text-white font-black text-xs uppercase rounded-xl shadow-md transition disabled:opacity-50 flex items-center gap-1.5 active:scale-95 cursor-pointer"
+                >
+                  <Sparkles className="w-3.5 h-3.5 text-amber-300" />
+                  <span>{isSavingAuditLeftovers ? 'Gravando...' : 'Confirmar e Gravar Sobras'}</span>
+                </button>
+              </div>
+            </form>
           </div>
         </div>
       )}
