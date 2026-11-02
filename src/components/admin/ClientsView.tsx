@@ -48,6 +48,7 @@ import {
   deleteUserProfile,
   createOrder,
   recordLeftovers,
+  confirmOrderPaidOnTheSpot,
   sendNotification,
   cleanupOrphanedHistory,
   resetAllHistoricalData,
@@ -145,6 +146,7 @@ export const ClientsView: React.FC<ClientsViewProps> = ({
   const [orderUnitPriceSalty, setOrderUnitPriceSalty] = useState<number | string>('');
   const [orderUnitPriceSweet, setOrderUnitPriceSweet] = useState<number | string>('');
   const [fixPriceForClient, setFixPriceForClient] = useState<boolean>(false);
+  const [clientOrderPaidOnTheSpot, setClientOrderPaidOnTheSpot] = useState<boolean>(false);
   const [orderNotes, setOrderNotes] = useState('');
   const [isCreatingOrder, setIsCreatingOrder] = useState(false);
   const [orderSuccessMsg, setOrderSuccessMsg] = useState<string | null>(null);
@@ -434,12 +436,21 @@ Para acessar:
           ? `[Lançado pela Panificadora]: ${orderNotes}`
           : '[Lançado pela Panificadora]',
         currentPrices: prices,
+        paidOnTheSpot: clientOrderPaidOnTheSpot,
+        paymentMethod: 'pix',
+        adminId: currentUser?.uid,
+        adminName: 'Administrador',
       });
 
-      setOrderSuccessMsg(`Pedido lançado com sucesso para ${clientForOrder.displayName}!`);
+      setOrderSuccessMsg(
+        clientOrderPaidOnTheSpot
+          ? `Pedido de ${clientForOrder.displayName} lançado e confirmado como 100% PAGO NA HORA (sem sobras pendentes)!`
+          : `Pedido lançado com sucesso para ${clientForOrder.displayName}!`
+      );
       setTimeout(() => {
         setClientForOrder(null);
         setOrderSuccessMsg(null);
+        setClientOrderPaidOnTheSpot(false);
         setQtySalty(50);
         setQtySweet(0);
         setOrderNotes('');
@@ -449,6 +460,25 @@ Para acessar:
       alert('Erro ao criar pedido para o cliente: ' + (err?.message || err));
     } finally {
       setIsCreatingOrder(false);
+    }
+  };
+
+  const handleConfirmOrderPaidOnTheSpot = async (order: Order) => {
+    if (!currentUser) return;
+    const amountVal = order.balanceDue || order.finalTotal || order.expectedTotal;
+    const confirmMsg = `Confirmar recebimento do ${order.orderNumber} (${formatCurrency(amountVal)})?\n\nO pedido será marcado como Concluído e Quitado na hora, e o registro de sobras será automaticamente encerrado (sem sobras).`;
+    if (!window.confirm(confirmMsg)) return;
+
+    try {
+      await confirmOrderPaidOnTheSpot({
+        order,
+        paymentMethod: 'pix',
+        adminId: currentUser.uid,
+        adminName: 'Administrador',
+      });
+      alert(`Pagamento do ${order.orderNumber} confirmado com sucesso! O pedido foi concluído sem sobras pendentes.`);
+    } catch (err: any) {
+      alert('Erro ao confirmar pagamento: ' + (err?.message || err));
     }
   };
 
@@ -1417,26 +1447,40 @@ Para acessar:
                             </div>
                           </div>
 
-                          <div className="flex items-center gap-2 pt-1">
-                            {!o.leftoversRecorded && (
+                          <div className="space-y-1.5 pt-1">
+                            <div className="flex items-center gap-2">
+                              {!o.leftoversRecorded && o.status !== 'concluido' && o.paymentStatus !== 'pago' && (
+                                <button
+                                  type="button"
+                                  onClick={() => handleOpenRecordLeftovers(o)}
+                                  className="flex-1 py-2 bg-amber-500 hover:bg-amber-600 text-stone-950 font-black rounded-xl text-xs flex items-center justify-center gap-1.5 shadow-sm transition active:scale-[0.98]"
+                                >
+                                  <Sparkles className="w-3.5 h-3.5 text-stone-950" />
+                                  <span>Lançar Sobras</span>
+                                </button>
+                              )}
                               <button
                                 type="button"
-                                onClick={() => handleOpenRecordLeftovers(o)}
-                                className="flex-1 py-2 bg-amber-500 hover:bg-amber-600 text-stone-950 font-black rounded-xl text-xs flex items-center justify-center gap-1.5 shadow-sm transition active:scale-[0.98]"
+                                onClick={() => setOrderToEdit(o)}
+                                className="flex-1 py-2 bg-stone-100 hover:bg-stone-200 text-stone-800 font-bold rounded-xl text-xs flex items-center justify-center gap-1.5 border border-stone-200 transition active:scale-[0.98]"
+                                title="Editar data de entrega, quantidades, preços ou observações"
                               >
-                                <Sparkles className="w-3.5 h-3.5 text-stone-950" />
-                                <span>Lançar Sobras</span>
+                                <Edit3 className="w-3.5 h-3.5 text-stone-700" />
+                                <span>Editar</span>
+                              </button>
+                            </div>
+
+                            {o.paymentStatus !== 'pago' && (
+                              <button
+                                type="button"
+                                onClick={() => handleConfirmOrderPaidOnTheSpot(o)}
+                                className="w-full py-2 bg-emerald-600 hover:bg-emerald-700 text-white font-black rounded-xl text-xs flex items-center justify-center gap-1.5 shadow-sm transition active:scale-[0.98]"
+                                title="Confirmar pagamento na hora (conclui o pedido sem sobras)"
+                              >
+                                <DollarSign className="w-3.5 h-3.5 text-emerald-200" />
+                                <span>Confirmar Pagamento (Pago na Hora)</span>
                               </button>
                             )}
-                            <button
-                              type="button"
-                              onClick={() => setOrderToEdit(o)}
-                              className="flex-1 py-2 bg-stone-100 hover:bg-stone-200 text-stone-800 font-bold rounded-xl text-xs flex items-center justify-center gap-1.5 border border-stone-200 transition active:scale-[0.98]"
-                              title="Editar data de entrega, quantidades, preços ou observações"
-                            >
-                              <Edit3 className="w-3.5 h-3.5 text-stone-700" />
-                              <span>Editar Pedido / Data</span>
-                            </button>
                           </div>
                         </div>
                       ))}
@@ -1495,7 +1539,7 @@ Para acessar:
                               </td>
                               <td className="py-3 text-center">
                                 <div className="flex items-center justify-center gap-1.5">
-                                  {!o.leftoversRecorded && (
+                                  {!o.leftoversRecorded && o.status !== 'concluido' && o.paymentStatus !== 'pago' && (
                                     <button
                                       type="button"
                                       onClick={() => handleOpenRecordLeftovers(o)}
@@ -1503,6 +1547,17 @@ Para acessar:
                                     >
                                       <Sparkles className="w-3 h-3 text-stone-950" />
                                       <span>Sobras</span>
+                                    </button>
+                                  )}
+                                  {o.paymentStatus !== 'pago' && (
+                                    <button
+                                      type="button"
+                                      onClick={() => handleConfirmOrderPaidOnTheSpot(o)}
+                                      className="px-2.5 py-1 bg-emerald-600 hover:bg-emerald-700 text-white font-black rounded-lg text-[10px] inline-flex items-center gap-1 shadow-2xs transition active:scale-95"
+                                      title="Confirmar pagamento na hora (conclui o pedido sem sobras)"
+                                    >
+                                      <DollarSign className="w-3 h-3 text-emerald-200" />
+                                      <span>Pago na Hora</span>
                                     </button>
                                   )}
                                   <button
@@ -2249,6 +2304,26 @@ Para acessar:
                       (Number(qtySweet) || 0) * (Number(orderUnitPriceSweet) || (clientForOrder.customPriceSweet ?? (prices?.priceSweet ?? DEFAULT_PRICES.priceSweet)))
                   )}
                 </p>
+              </div>
+
+              {/* Paid on the spot checkbox */}
+              <div className="p-3.5 bg-emerald-50 rounded-2xl border-2 border-emerald-300">
+                <label className="flex items-start gap-2.5 cursor-pointer">
+                  <input
+                    type="checkbox"
+                    checked={clientOrderPaidOnTheSpot}
+                    onChange={(e) => setClientOrderPaidOnTheSpot(e.target.checked)}
+                    className="w-4 h-4 mt-0.5 rounded-sm text-emerald-600 accent-emerald-600"
+                  />
+                  <div>
+                    <span className="text-xs font-black text-emerald-950 block">
+                      Cliente já pagou na hora (Sem sobras)
+                    </span>
+                    <span className="text-[11px] text-emerald-800 block leading-tight mt-0.5">
+                      Marcar o pedido como 100% quitado e concluído na hora. O registro de sobras será automaticamente encerrado (0 sobras).
+                    </span>
+                  </div>
+                </label>
               </div>
 
               {/* Notes */}

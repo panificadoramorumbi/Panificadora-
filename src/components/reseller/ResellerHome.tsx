@@ -163,9 +163,11 @@ export const ResellerHome: React.FC<ResellerHomeProps> = ({
     return orders.filter((o) => o.resellerId === currentUser.uid);
   }, [orders, currentUser]);
 
-  // Orders awaiting leftovers
+  // Orders awaiting leftovers (exclui pedidos já quitados ou pagos na hora)
   const ordersAwaitingLeftovers = useMemo(() => {
-    return myOrders.filter((o) => !o.leftoversRecorded && o.status === 'aguardando_sobras');
+    return myOrders.filter(
+      (o) => !o.leftoversRecorded && o.status === 'aguardando_sobras' && o.paymentStatus !== 'pago'
+    );
   }, [myOrders]);
 
   // Resale Price Configuration (Preço de venda ao consumidor final pelo revendedor ou valor do lanche)
@@ -804,7 +806,7 @@ export const ResellerHome: React.FC<ResellerHomeProps> = ({
                           </span>
                         </div>
 
-                        {!order.leftoversRecorded && (
+                        {!order.leftoversRecorded && order.status !== 'concluido' && order.paymentStatus !== 'pago' ? (
                           <button
                             type="button"
                             onClick={() => {
@@ -817,7 +819,11 @@ export const ResellerHome: React.FC<ResellerHomeProps> = ({
                           >
                             Informar Sobras
                           </button>
-                        )}
+                        ) : order.paymentStatus === 'pago' ? (
+                          <span className="px-2 py-1 rounded-lg bg-emerald-50 text-emerald-700 text-[10px] font-bold border border-emerald-200">
+                            ✓ Quitado (Sem sobras)
+                          </span>
+                        ) : null}
                       </div>
                     </div>
                   );
@@ -887,7 +893,7 @@ export const ResellerHome: React.FC<ResellerHomeProps> = ({
                             </span>
                           </td>
                           <td className="py-3 text-center">
-                            {!order.leftoversRecorded && (
+                            {!order.leftoversRecorded && order.status !== 'concluido' && order.paymentStatus !== 'pago' ? (
                               <button
                                 onClick={() => {
                                   setSelectedOrderForLeftovers(order);
@@ -899,6 +905,14 @@ export const ResellerHome: React.FC<ResellerHomeProps> = ({
                               >
                                 Informar Sobras
                               </button>
+                            ) : order.paymentStatus === 'pago' ? (
+                              <span className="text-[10px] text-emerald-700 font-black">
+                                ✓ Quitado
+                              </span>
+                            ) : (
+                              <span className="text-[10px] text-stone-400 font-medium">
+                                Concluído
+                              </span>
                             )}
                           </td>
                         </tr>

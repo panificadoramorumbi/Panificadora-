@@ -32,6 +32,7 @@ import {
 import {
   createOrder,
   recordLeftovers,
+  confirmOrderPaidOnTheSpot,
   sendNotification,
   updateUserProfile,
   DEFAULT_PRICES,
@@ -60,6 +61,12 @@ export const OrdersView: React.FC<OrdersViewProps> = ({
   const [selectedOrder, setSelectedOrder] = useState<Order | null>(null);
   const [orderToEdit, setOrderToEdit] = useState<Order | null>(null);
 
+  // Quick payment confirmation state ("Pago na hora / Sem sobras")
+  const [orderForQuickPay, setOrderForQuickPay] = useState<Order | null>(null);
+  const [quickPayMethod, setQuickPayMethod] = useState<'pix' | 'dinheiro' | 'cartao' | 'outro'>('pix');
+  const [isConfirmingQuickPay, setIsConfirmingQuickPay] = useState(false);
+  const [quickPaySuccess, setQuickPaySuccess] = useState<string | null>(null);
+
   // Admin record leftovers state (Patrão lança sobras pelo cliente)
   const [orderForLeftovers, setOrderForLeftovers] = useState<Order | null>(null);
   const [adminSaltyLeftover, setAdminSaltyLeftover] = useState<number>(0);
@@ -70,6 +77,7 @@ export const OrdersView: React.FC<OrdersViewProps> = ({
 
   // New Order Modal state
   const [showNewOrderModal, setShowNewOrderModal] = useState(false);
+  const [newOrderPaidOnTheSpot, setNewOrderPaidOnTheSpot] = useState(false);
   const [selectedResellerId, setSelectedResellerId] = useState<string>('');
   const [newOrderDate, setNewOrderDate] = useState<string>(() => new Date().toISOString().split('T')[0]);
   const [newDeliveryDate, setNewDeliveryDate] = useState<string>(() => {
@@ -329,12 +337,21 @@ _Panificadora Morumbi — Sistema de Revenda_`;
           ? `[Lançado pelo Patrão/Admin]: ${newOrderNotes}`
           : '[Lançado pelo Patrão/Admin]',
         currentPrices: prices,
+        paidOnTheSpot: newOrderPaidOnTheSpot,
+        paymentMethod: 'pix',
+        adminId: currentUser?.uid,
+        adminName: userProfile?.displayName || 'Administrador',
       });
 
-      setOrderModalSuccess(`Pedido lançado com sucesso para ${reseller.displayName}!`);
+      setOrderModalSuccess(
+        newOrderPaidOnTheSpot
+          ? `Pedido de ${reseller.displayName} lançado e confirmado como 100% PAGO NA HORA (sem sobras pendentes)!`
+          : `Pedido lançado com sucesso para ${reseller.displayName}!`
+      );
       setTimeout(() => {
         setShowNewOrderModal(false);
         setOrderModalSuccess(null);
+        setNewOrderPaidOnTheSpot(false);
         setNewQtySalty(50);
         setNewQtySweet(0);
         setNewOrderNotes('');
@@ -344,6 +361,30 @@ _Panificadora Morumbi — Sistema de Revenda_`;
       alert('Erro ao criar pedido: ' + (err?.message || err));
     } finally {
       setIsSubmittingOrder(false);
+    }
+  };
+
+  const handleConfirmQuickPay = async (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!orderForQuickPay || !currentUser) return;
+    setIsConfirmingQuickPay(true);
+    try {
+      await confirmOrderPaidOnTheSpot({
+        order: orderForQuickPay,
+        paymentMethod: quickPayMethod,
+        adminId: currentUser.uid,
+        adminName: userProfile?.displayName || 'Administrador',
+      });
+      setQuickPaySuccess(`Pagamento do ${orderForQuickPay.orderNumber} confirmado com sucesso! O pedido foi concluído e não possui mais sobras pendentes.`);
+      setTimeout(() => {
+        setOrderForQuickPay(null);
+        setQuickPaySuccess(null);
+      }, 1500);
+    } catch (err: any) {
+      console.error(err);
+      alert('Erro ao confirmar pagamento: ' + (err?.message || err));
+    } finally {
+      setIsConfirmingQuickPay(false);
     }
   };
 
@@ -690,7 +731,7 @@ _Panificadora Morumbi — Sistema de Revenda_`;
 
                   {/* Action Buttons on Mobile (Full width touch targets) */}
                   <div className="space-y-2 pt-1">
-                    {!order.leftoversRecorded && (
+                    {!order.leftoversRecorded && order.status !== 'concluido' && order.paymentStatus !== 'pago' && (
                       <button
                         type="button"
                         onClick={() => handleOpenRecordLeftovers(order)}
@@ -698,6 +739,18 @@ _Panificadora Morumbi — Sistema de Revenda_`;
                       >
                         <Sparkles className="w-4 h-4 text-stone-950" />
                         <span>Lançar Sobras Deste Pedido</span>
+                      </button>
+                    )}
+
+                    {order.paymentStatus !== 'pago' && (
+                      <button
+                        type="button"
+                        onClick={() => setOrderForQuickPay(order)}
+                        className="w-full py-2 px-3 bg-emerald-600 hover:bg-emerald-700 active:scale-95 text-white font-black text-xs uppercase rounded-xl shadow-xs transition flex items-center justify-center gap-1.5 cursor-pointer"
+                        title="Confirmar que o cliente pagou na hora (conclui o pedido sem sobras)"
+                      >
+                        <DollarSign className="w-4 h-4 text-emerald-200" />
+                        <span>Confirmar Pagamento (Pago na Hora)</span>
                       </button>
                     )}
 
@@ -809,7 +862,7 @@ _Panificadora Morumbi — Sistema de Revenda_`;
                       </td>
                       <td className="py-3.5 text-center">
                         <div className="flex items-center justify-center gap-1.5">
-                          {!order.leftoversRecorded && (
+                          {!order.leftoversRecorded && order.status !== 'concluido' && order.paymentStatus !== 'pago' && (
                             <button
                               type="button"
                               onClick={() => handleOpenRecordLeftovers(order)}
@@ -818,6 +871,17 @@ _Panificadora Morumbi — Sistema de Revenda_`;
                             >
                               <Sparkles className="w-3.5 h-3.5 text-stone-950" />
                               <span>Lançar Sobras</span>
+                            </button>
+                          )}
+                          {order.paymentStatus !== 'pago' && (
+                            <button
+                              type="button"
+                              onClick={() => setOrderForQuickPay(order)}
+                              className="px-2.5 py-1.5 rounded-lg bg-emerald-600 hover:bg-emerald-700 active:scale-95 text-white font-black text-[11px] shadow-xs transition flex items-center gap-1 shrink-0 cursor-pointer"
+                              title="Confirmar pagamento integral na hora (sem sobras)"
+                            >
+                              <DollarSign className="w-3.5 h-3.5 text-emerald-200" />
+                              <span>Pago na Hora</span>
                             </button>
                           )}
                           <button
@@ -1015,6 +1079,21 @@ _Panificadora Morumbi — Sistema de Revenda_`;
               )}
 
               <div className="flex flex-wrap items-center justify-end gap-2 pt-2">
+                {selectedOrder.paymentStatus !== 'pago' && (
+                  <button
+                    type="button"
+                    onClick={() => {
+                      const cur = selectedOrder;
+                      setSelectedOrder(null);
+                      setOrderForQuickPay(cur);
+                    }}
+                    className="px-4 py-2.5 bg-emerald-600 hover:bg-emerald-700 text-white font-black rounded-xl flex items-center gap-2 shadow-xs transition cursor-pointer"
+                    title="Confirmar que o cliente pagou na hora (conclui o pedido sem sobras pendentes)"
+                  >
+                    <DollarSign className="w-4 h-4 text-emerald-200" />
+                    <span>Confirmar Pagamento (Pago na Hora)</span>
+                  </button>
+                )}
                 <button
                   type="button"
                   onClick={() => {
@@ -1304,6 +1383,26 @@ _Panificadora Morumbi — Sistema de Revenda_`;
                 </p>
               </div>
 
+              {/* Paid on the spot checkbox */}
+              <div className="p-3.5 bg-emerald-50 rounded-2xl border-2 border-emerald-300">
+                <label className="flex items-start gap-2.5 cursor-pointer">
+                  <input
+                    type="checkbox"
+                    checked={newOrderPaidOnTheSpot}
+                    onChange={(e) => setNewOrderPaidOnTheSpot(e.target.checked)}
+                    className="w-4 h-4 mt-0.5 rounded-sm text-emerald-600 accent-emerald-600"
+                  />
+                  <div>
+                    <span className="text-xs font-black text-emerald-950 block">
+                      Cliente já pagou na hora (Sem sobras)
+                    </span>
+                    <span className="text-[11px] text-emerald-800 block leading-tight mt-0.5">
+                      Marcar o pedido como 100% quitado e concluído na hora. O registro de sobras será automaticamente encerrado (0 sobras).
+                    </span>
+                  </div>
+                </label>
+              </div>
+
               {/* Notes */}
               <div>
                 <label className="block text-xs font-bold text-stone-700 uppercase mb-1">
@@ -1528,6 +1627,100 @@ _Panificadora Morumbi — Sistema de Revenda_`;
                 </button>
               </div>
             </form>
+          </div>
+        </div>
+      )}
+
+      {/* Modal: Confirmar Pagamento na Hora (Sem Sobras) */}
+      {orderForQuickPay && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 backdrop-blur-xs p-4 overflow-y-auto">
+          <div className="w-full max-w-md bg-white rounded-3xl p-6 sm:p-7 shadow-2xl border border-stone-200 my-8">
+            <div className="flex items-center justify-between pb-4 border-b border-stone-100">
+              <div className="flex items-center gap-2.5">
+                <div className="w-10 h-10 rounded-2xl bg-emerald-600 text-white flex items-center justify-center font-bold">
+                  <DollarSign className="w-5 h-5 text-emerald-200" />
+                </div>
+                <div>
+                  <h3 className="text-base font-black text-stone-900">Confirmar Pagamento na Hora</h3>
+                  <p className="text-xs text-stone-500">{orderForQuickPay.orderNumber} • {orderForQuickPay.resellerName}</p>
+                </div>
+              </div>
+              <button
+                type="button"
+                onClick={() => setOrderForQuickPay(null)}
+                className="p-1 rounded-full text-stone-400 hover:text-stone-700"
+              >
+                <X className="w-5 h-5" />
+              </button>
+            </div>
+
+            {quickPaySuccess ? (
+              <div className="py-6 text-center space-y-3">
+                <div className="w-12 h-12 bg-emerald-100 text-emerald-700 rounded-full flex items-center justify-center mx-auto">
+                  <CheckCircle2 className="w-7 h-7" />
+                </div>
+                <p className="text-sm font-black text-emerald-900">{quickPaySuccess}</p>
+              </div>
+            ) : (
+              <form onSubmit={handleConfirmQuickPay} className="space-y-4 mt-4">
+                <div className="p-4 bg-emerald-50 rounded-2xl border border-emerald-200 space-y-2">
+                  <div className="flex justify-between items-center text-xs text-emerald-950 font-bold">
+                    <span>Valor a Quitar:</span>
+                    <span className="text-xl font-black text-emerald-800">
+                      {formatCurrency(orderForQuickPay.balanceDue || orderForQuickPay.finalTotal || orderForQuickPay.expectedTotal)}
+                    </span>
+                  </div>
+                  <div className="text-[11px] text-emerald-800 pt-2 border-t border-emerald-200 leading-tight">
+                    💡 <strong>Atenção:</strong> Ao confirmar o recebimento deste valor, o pedido será marcado como <strong>Concluído e Quitado</strong>. O botão de registrar sobras será <strong>automaticamente encerrado</strong>, pois o cliente já pagou e não devolverá pães.
+                  </div>
+                </div>
+
+                <div>
+                  <label className="block text-xs font-bold text-stone-700 uppercase mb-1">
+                    Forma de Pagamento Recebida *
+                  </label>
+                  <div className="grid grid-cols-3 gap-2">
+                    {[
+                      { id: 'pix', label: 'PIX' },
+                      { id: 'dinheiro', label: 'Dinheiro' },
+                      { id: 'cartao', label: 'Cartão' },
+                    ].map((m) => (
+                      <button
+                        key={m.id}
+                        type="button"
+                        onClick={() => setQuickPayMethod(m.id as any)}
+                        className={`py-2 px-3 rounded-xl text-xs font-bold border transition ${
+                          quickPayMethod === m.id
+                            ? 'bg-emerald-600 text-white border-emerald-600 shadow-2xs'
+                            : 'bg-white text-stone-700 border-stone-200 hover:bg-stone-50'
+                        }`}
+                      >
+                        {m.label}
+                      </button>
+                    ))}
+                  </div>
+                </div>
+
+                <div className="pt-3 flex items-center justify-end gap-2.5 border-t border-stone-100">
+                  <button
+                    type="button"
+                    disabled={isConfirmingQuickPay}
+                    onClick={() => setOrderForQuickPay(null)}
+                    className="px-4 py-2.5 font-bold text-stone-600 hover:text-stone-900 rounded-xl text-xs"
+                  >
+                    Cancelar
+                  </button>
+                  <button
+                    type="submit"
+                    disabled={isConfirmingQuickPay}
+                    className="px-5 py-2.5 bg-emerald-600 hover:bg-emerald-700 text-white font-black text-xs uppercase rounded-xl shadow-md transition disabled:opacity-50 flex items-center gap-1.5 active:scale-95"
+                  >
+                    <CheckCircle className="w-4 h-4" />
+                    <span>{isConfirmingQuickPay ? 'Confirmando...' : 'Confirmar e Quitar Pedido'}</span>
+                  </button>
+                </div>
+              </form>
+            )}
           </div>
         </div>
       )}

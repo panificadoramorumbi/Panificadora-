@@ -22,6 +22,7 @@ import {
   ProductPrices,
   InAppNotification,
   TrashItem,
+  PaymentMethod,
 } from '../types';
 import { calculateOrderMetrics, sanitizeUsername } from '../utils/formatters';
 
@@ -368,6 +369,10 @@ export async function createOrder(params: {
   unitPriceSweet?: number;
   notes?: string;
   currentPrices: ProductPrices;
+  paidOnTheSpot?: boolean;
+  paymentMethod?: PaymentMethod;
+  adminId?: string;
+  adminName?: string;
 }): Promise<string> {
   const {
     resellerId,
@@ -380,6 +385,10 @@ export async function createOrder(params: {
     unitPriceSweet: customSweetPrice,
     notes,
     currentPrices,
+    paidOnTheSpot = false,
+    paymentMethod = 'pix',
+    adminId,
+    adminName,
   } = params;
 
   const unitPriceSalty =
@@ -396,7 +405,7 @@ export async function createOrder(params: {
     qtySweetPickup,
     qtySaltyLeftover: 0,
     qtySweetLeftover: 0,
-    leftoversRecorded: false,
+    leftoversRecorded: paidOnTheSpot,
     unitPriceSalty,
     unitPriceSweet,
   });
@@ -413,6 +422,8 @@ export async function createOrder(params: {
     orderNumber = `Pedido #${randomSuffix}`;
   }
 
+  const isPaid = Boolean(paidOnTheSpot);
+
   const orderData = {
     orderNumber,
     resellerId,
@@ -423,23 +434,49 @@ export async function createOrder(params: {
     qtySweetPickup: metrics.qtySweetPickup,
     qtySaltyLeftover: 0,
     qtySweetLeftover: 0,
-    leftoversRecorded: false,
+    leftoversRecorded: isPaid,
+    ...(isPaid
+      ? {
+          leftoversRecordedAt: new Date().toISOString(),
+          leftoversRecordedBy: `${adminName || 'Administrador'} (Pago na hora - Sem sobras)`,
+        }
+      : {}),
     qtySaltySold: metrics.qtySaltySold,
     qtySweetSold: metrics.qtySweetSold,
     unitPriceSalty,
     unitPriceSweet,
     expectedTotal: metrics.expectedTotal,
     finalTotal: metrics.expectedTotal,
-    status: 'aguardando_sobras',
-    paymentStatus: 'pendente',
-    amountPaid: 0,
-    balanceDue: metrics.expectedTotal,
+    status: isPaid ? 'concluido' : 'aguardando_sobras',
+    paymentStatus: isPaid ? 'pago' : 'pendente',
+    amountPaid: isPaid ? metrics.expectedTotal : 0,
+    balanceDue: isPaid ? 0 : metrics.expectedTotal,
     notes: notes || '',
     createdAt: new Date().toISOString(),
   };
 
   try {
     const docRef = await addDoc(collection(db, 'orders'), orderData);
+
+    // If paid on the spot, automatically register payment receipt in payments collection
+    if (isPaid && metrics.expectedTotal > 0) {
+      try {
+        await addDoc(collection(db, 'payments'), {
+          resellerId,
+          resellerName,
+          orderIds: [docRef.id],
+          amount: metrics.expectedTotal,
+          paymentMethod,
+          paymentDate: orderDate || new Date().toISOString().slice(0, 10),
+          notes: `Pago na hora na entrega do ${orderNumber} - Sem sobras`,
+          registeredBy: adminId || 'admin',
+          registeredByName: adminName || 'Administrador',
+          createdAt: new Date().toISOString(),
+        });
+      } catch (payErr) {
+        console.warn('Erro ao gravar recibo de pagamento na hora:', payErr);
+      }
+    }
 
     // Send in-app notification to admins
     await sendNotification({
@@ -844,12 +881,29 @@ export async function registerPayment(params: {
       const newBalance = Number(Math.max(0, order.finalTotal - newPaid).toFixed(2));
       const newPaymentStatus = newBalance <= 0 ? 'pago' : 'parcial';
 
-      await updateDoc(doc(db, 'orders', order.id), {
+      const orderUpdateData: any = {
         amountPaid: newPaid,
         balanceDue: newBalance,
         paymentStatus: newPaymentStatus,
         updatedAt: new Date().toISOString(),
-      });
+      };
+
+      // REGRA: Ao confirmar pagamento (especialmente se pago na hora ou quitado),
+      // o registro de sobras fica concluído sem sobras (0 sobras) para não ficar mais disponível!
+      if (!order.leftoversRecorded) {
+        orderUpdateData.leftoversRecorded = true;
+        orderUpdateData.qtySaltyLeftover = 0;
+        orderUpdateData.qtySweetLeftover = 0;
+        orderUpdateData.qtySaltySold = order.qtySaltyPickup;
+        orderUpdateData.qtySweetSold = order.qtySweetPickup;
+        orderUpdateData.status = 'concluido';
+        orderUpdateData.leftoversRecordedAt = new Date().toISOString();
+        orderUpdateData.leftoversRecordedBy = `${adminName} (Pagamento Confirmado - Sem Sobras)`;
+      } else if (newPaymentStatus === 'pago') {
+        orderUpdateData.status = 'concluido';
+      }
+
+      await updateDoc(doc(db, 'orders', order.id), orderUpdateData);
 
       remainingPayment -= applyAmount;
     }
@@ -868,6 +922,79 @@ export async function registerPayment(params: {
     return paymentDocRef.id;
   } catch (error) {
     handleFirestoreError(error, OperationType.CREATE, 'payments');
+  }
+}
+
+/**
+ * Confirm order paid on the spot ("Pago na hora / Sem sobras")
+ * Automatically marks the order as paid in full (balanceDue = 0, paymentStatus = 'pago'),
+ * records leftovers as 0 (leftoversRecorded = true, status = 'concluido'),
+ * and logs a payment record into the payments collection.
+ */
+export async function confirmOrderPaidOnTheSpot(params: {
+  order: Order;
+  paymentMethod?: PaymentMethod;
+  adminId: string;
+  adminName: string;
+  notes?: string;
+}): Promise<void> {
+  const { order, paymentMethod = 'pix', adminId, adminName, notes } = params;
+
+  const totalAmount = order.finalTotal || order.expectedTotal || 0;
+  const remainingDue = Math.max(0, order.balanceDue || totalAmount);
+  const newAmountPaid = Number(((order.amountPaid || 0) + remainingDue).toFixed(2));
+
+  const orderUpdateData: any = {
+    amountPaid: newAmountPaid,
+    balanceDue: 0,
+    paymentStatus: 'pago',
+    status: 'concluido',
+    leftoversRecorded: true,
+    qtySaltyLeftover: 0,
+    qtySweetLeftover: 0,
+    qtySaltySold: order.qtySaltyPickup,
+    qtySweetSold: order.qtySweetPickup,
+    leftoversRecordedAt: new Date().toISOString(),
+    leftoversRecordedBy: `${adminName} (Pago na hora - Sem sobras)`,
+    updatedAt: new Date().toISOString(),
+  };
+
+  try {
+    // 1. Update order document
+    await updateDoc(doc(db, 'orders', order.id), orderUpdateData);
+
+    // 2. Add payment record to payments collection
+    if (remainingDue > 0) {
+      await addDoc(collection(db, 'payments'), {
+        resellerId: order.resellerId,
+        resellerName: order.resellerName,
+        orderIds: [order.id],
+        amount: remainingDue,
+        paymentMethod,
+        paymentDate: new Date().toISOString().slice(0, 10),
+        notes: notes || `Pago na hora (${order.orderNumber}) - Quitado sem sobras`,
+        registeredBy: adminId,
+        registeredByName: adminName,
+        createdAt: new Date().toISOString(),
+      });
+    }
+
+    // 3. Notify reseller in-app
+    if (order.resellerId && order.resellerId !== 'varejo') {
+      try {
+        await sendNotification({
+          targetUserId: order.resellerId,
+          title: `Pagamento Confirmado - ${order.orderNumber}`,
+          message: `Seu pagamento foi confirmado! O pedido foi concluído com sucesso e sem pendências.`,
+          type: 'pagamento',
+          orderId: order.id,
+          orderNumber: order.orderNumber,
+          resellerId: order.resellerId,
+        });
+      } catch {}
+    }
+  } catch (error) {
+    handleFirestoreError(error, OperationType.UPDATE, `orders/${order.id}`);
   }
 }
 
